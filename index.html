@@ -1,4 +1,4 @@
-<!-- BUILD:v-042018 -->
+<!-- BUILD:v-051420 -->
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1576,6 +1576,14 @@ function mesclarEstado(base, incoming){
   if(!incoming) return base;
   const out=Object.assign({}, base);
   Object.keys(incoming).forEach(k=>{ out[k]=incoming[k]; });
+  // o Firebase pode devolver arrays como objetos indexados ({0:..,2:..}) ou com
+  // buracos após exclusões — normaliza de volta para arrays densos.
+  ["fichas","cenas","jogadores","npcs","countdowns","musicas","cartasCustom"].forEach(k=>{
+    if(out[k] && !Array.isArray(out[k]) && typeof out[k]==="object"){
+      out[k]=Object.values(out[k]);
+    }
+    if(Array.isArray(out[k])) out[k]=out[k].filter(x=>x!=null);
+  });
   return out;
 }
 function conectarFirebase(){
@@ -1637,7 +1645,18 @@ function save(){
   salvarLocal();
   if(sincAtiva()&&!aplicandoRemoto&&!primeiraLeitura){
     clearTimeout(tSalvar);
-    tSalvar=setTimeout(()=>{ meuRev=STATE._rev; ignorarProx=true; dbRef.update(STATE).catch(()=>{}); },260);
+    tSalvar=setTimeout(()=>{
+      meuRev=STATE._rev; ignorarProx=true;
+      // update no estado geral...
+      dbRef.update(STATE).catch(()=>{});
+      // ...MAS as fichas, cenas e jogadores são SUBSTITUÍDOS por completo (set),
+      // senão exclusões não propagam: o Firebase guarda arrays como objetos
+      // indexados e o update deixa índices órfãos que "ressuscitam" itens apagados.
+      try{ dbRef.child("fichas").set(STATE.fichas||[]).catch(()=>{}); }catch(e){}
+      try{ dbRef.child("jogadores").set(STATE.jogadores||[]).catch(()=>{}); }catch(e){}
+      try{ dbRef.child("cenas").set(STATE.cenas||[]).catch(()=>{}); }catch(e){}
+      try{ dbRef.child("assumidos").set(STATE.assumidos||{}).catch(()=>{}); }catch(e){}
+    },260);
   }
 }
 function loadLocal(){ try{const d=localStorage.getItem("althas_vtt"); if(d)STATE=mesclarEstado(STATE,JSON.parse(d));}catch(e){} }
@@ -2163,7 +2182,7 @@ function editandoFicha(){
 }
 
 loadLocal();
-console.log('%c MESA DE ALTHAS BUILD:v-042018 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
+console.log('%c MESA DE ALTHAS BUILD:v-051420 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
 // ============================================================
 // MÓDULO 2 — mesa, cenas, tokens, régua em área, fichas, galeria, mestre, música
 // ============================================================
@@ -2586,23 +2605,30 @@ function renderWizard(){
         ${Object.keys(NACAO_CORES).map(n=>`<option${f.nacao===n?" selected":""}>${n}</option>`).join("")}
       </select>`;
   } else if(p===1){
+    const sel=f.ancestralidade;
     conteudo=`<label class="fld">Escolha a ancestralidade</label>
-      <div class="grim-list" style="max-height:280px;overflow:auto">
-        ${Object.keys(ANCESTRALIDADES).filter(n=>n!=="Ancestralidade Mista").map(n=>{
-          const habs=ANCESTRALIDADES[n]; const sel=f.ancestralidade===n;
-          return `<button class="grim-op${sel?' on':''}" style="${sel?'border-color:var(--gold2)':''}" onclick="wizEscolheAnc('${n}')">
-            <b>${n}</b> <small>${habs.map(h=>h.n).join(" · ")}</small></button>`;
+      <div class="grim-list" style="max-height:240px;overflow:auto">
+        ${Object.keys(ANCESTRALIDADES).map(n=>{
+          const habs=ANCESTRALIDADES[n]; const on=sel===n;
+          const resumo = Array.isArray(habs) ? habs.map(h=>h.n).join(" · ") : "escolha 2 habilidades de outras ancestralidades";
+          return `<button class="grim-op${on?' on':''}" style="${on?'border-color:var(--gold2)':''}" onclick="wizEscolheAnc('${esc(n)}')">
+            <b>${n}</b> <small>${resumo}</small></button>`;
         }).join("")}
-      </div>`;
+      </div>
+      ${sel?`<div class="poderTxt" style="font-size:12px;margin-top:8px">
+        <b style="color:var(--gold2)">${esc(sel)}</b><br>${esc(f.habAncestralidade||"—")}</div>`:""}`;
   } else if(p===2){
+    const sel=f.comunidade;
     conteudo=`<label class="fld">Escolha a comunidade</label>
-      <div class="grim-list" style="max-height:280px;overflow:auto">
+      <div class="grim-list" style="max-height:240px;overflow:auto">
         ${Object.keys(COMUNIDADES).map(n=>{
-          const h=COMUNIDADES[n]; const sel=f.comunidade===n;
-          return `<button class="grim-op${sel?' on':''}" style="${sel?'border-color:var(--gold2)':''}" onclick="wizEscolheCom('${n}')">
+          const h=COMUNIDADES[n]; const on=sel===n;
+          return `<button class="grim-op${on?' on':''}" style="${on?'border-color:var(--gold2)':''}" onclick="wizEscolheCom('${esc(n)}')">
             <b>${n}</b> <small>${h.n}</small></button>`;
         }).join("")}
-      </div>`;
+      </div>
+      ${sel?`<div class="poderTxt" style="font-size:12px;margin-top:8px">
+        <b style="color:var(--gold2)">${esc(sel)}</b><br>${esc(f.habComunidade||"—")}</div>`:""}`;
   } else if(p===3){
     conteudo=`<label class="fld">Escolha a classe</label>
       <div class="grim-list" style="max-height:280px;overflow:auto">
@@ -2671,7 +2697,12 @@ function renderWizard(){
 }
 function wizAvancar(){ if(wizardEstado&&wizardEstado.passo<WIZARD_PASSOS.length-1){ wizardEstado.passo++; renderWizard(); } }
 function wizVoltar(){ if(wizardEstado&&wizardEstado.passo>0){ wizardEstado.passo--; renderWizard(); } }
-function wizEscolheAnc(n){ wizardEstado.f.ancestralidade=n; wizardEstado.f.habAncestralidade=ANCESTRALIDADES[n].map(h=>`${h.n}: ${h.t}`).join(" "); renderWizard(); }
+function wizEscolheAnc(n){
+  wizardEstado.f.ancestralidade=n;
+  const habs=ANCESTRALIDADES[n];
+  wizardEstado.f.habAncestralidade = Array.isArray(habs) ? habs.map(h=>`${h.n}: ${h.t}`).join(" ") : "";
+  renderWizard();
+}
 function wizEscolheCom(n){ wizardEstado.f.comunidade=n; const h=COMUNIDADES[n]; wizardEstado.f.habComunidade=`${h.n}: ${h.t}`; renderWizard(); }
 function wizEscolheClasse(n){
   const f=wizardEstado.f; f.classe=n; f.subclasse="";
@@ -3209,19 +3240,99 @@ function addTokenDeFicha(id){const f=fichaPorId(id);novoToken({nome:f.nome||"PJ"
 // ---- SUBIR NÍVEL ----
 function subirNivel(id){
   const f=fichaPorId(id);
-  if(f.nivel>=10){alert("Nível máximo.");return;}
-  f.nivel++; f.patamar=f.nivel>=8?4:f.nivel>=5?3:f.nivel>=2?2:1;
-  // patamar 2 começa no nível 2: +1 PV e +proficiência no nível 5
-  f.pvMax+=1;
-  if(f.nivel===2||f.nivel===5)f.prof+=1;
-  const escolha=prompt(`${f.nome} subiu para o nível ${f.nivel}!\n\nEscolha um avanço:\n1 = +1 em dois atributos\n2 = +1 Espaço de Vida\n3 = +1 Espaço de Fadiga\n4 = Nova carta de domínio (abra a lista abaixo)`,"1");
-  if(escolha==="1"){
-    const as=prompt("Quais dois atributos? (ex: Instinto,Presença)","");
-    (as||"").split(",").map(s=>s.trim()).forEach(a=>{if(f.atributos[a]!==undefined)f.atributos[a]++;});
-  } else if(escolha==="3"){ f.fadigaMax+=1; }
-  else if(escolha==="2"){ f.pvMax+=1; }
-  logItem(`⇧ <b>${esc(f.nome)}</b> subiu para o <b>nível ${f.nivel}</b> (patamar ${f.patamar}).`,"var(--hope)");
-  save();renderFichas(false);renderHotbar();atualizaFichaSel();
+  if(f.nivel>=10){alert("Nível máximo (10).");return;}
+  abrirSubirNivel(f);
+}
+// modal de subir nível com as opções de avanço oficiais (Livro Básico p.111-112)
+function abrirSubirNivel(f){
+  const novoNivel=f.nivel+1;
+  const novoPatamar=novoNivel>=8?4:novoNivel>=5?3:novoNivel>=2?2:1;
+  const trocaPatamar=novoPatamar!==f.patamar;
+  const conquista=(novoNivel===2||novoNivel===5||novoNivel===8);
+  // estado temporário das escolhas do avanço (escolher 2)
+  window.__avanco={ id:f.id, novoNivel, novoPatamar, escolhas:[], max:2 };
+  const OPCOES=[
+    {k:"attr", t:"+1 em dois atributos", d:"Escolha 2 atributos e some +1 em cada (trava até o próximo patamar)."},
+    {k:"evasao", t:"+1 Evasão", d:"Aumenta sua Evasão em +1 permanentemente."},
+    {k:"pv", t:"+1 Espaço de Vida (PV)", d:"Ganha 1 Ponto de Vida máximo."},
+    {k:"pf", t:"+1 Espaço de Fadiga (PF)", d:"Ganha 1 Ponto de Fadiga máximo."},
+    {k:"exp", t:"+1 em duas Experiências", d:"Escolha 2 Experiências e some +1 em cada."},
+    {k:"carta", t:"Carta de domínio adicional", d:"Pegue uma carta a mais de um domínio seu, de nível ≤ ao seu."},
+    {k:"prof", t:"+1 Proficiência", d:"Aumenta a Proficiência (e os dados de dano das armas) em +1."},
+    {k:"subclasse", t:"Carta de subclasse aprimorada", d:"Avança para a próxima carta da sua subclasse (especialização/maestria)."}
+  ];
+  const box=$("#poderModal"),body=$("#poderBody");
+  body.innerHTML=`<h3>⇧ Subir para o nível ${novoNivel} — ${esc(f.nome)}</h3>
+    <p class="hint">Patamar ${novoPatamar}${trocaPatamar?" (novo patamar!)":""}. ${conquista?`<b style="color:var(--gold2)">Conquista do nível ${novoNivel}:</b> nova Experiência (+2) e +1 Proficiência automáticos. `:""}Escolha <b>2 avanços</b> abaixo.</p>
+    <div class="grim-list" id="avancoLista">${renderAvancos(OPCOES)}</div>
+    <div class="row" style="margin-top:10px;justify-content:space-between">
+      <span class="mono" id="avancoContador" style="font-size:11px;color:var(--dim)">0/2 avanços</span>
+      <div style="display:flex;gap:6px">
+        <button class="btn pri" id="avancoConfirmar" disabled onclick="confirmarSubirNivel()">Confirmar</button>
+        <button class="btn" onclick="fecharPoder()">Cancelar</button>
+      </div>
+    </div>`;
+  window.__avanco.opcoes=OPCOES;
+  box.classList.add("on");
+}
+function renderAvancos(OPCOES){
+  const A=window.__avanco; if(!A)return"";
+  return OPCOES.map((o,i)=>{
+    const vezes=A.escolhas.filter(e=>e===o.k).length;
+    const podeRepetir=(o.k==="pv"||o.k==="pf"); // PV/PF podem ser escolhidos 2x
+    const sel=vezes>0;
+    return `<button class="grim-op${sel?' on':''}" style="${sel?'border-color:var(--gold2)':''}" onclick="escolherAvanco(${i})">
+      <b>${esc(o.t)}</b> ${vezes?`<span class="ih-medo">×${vezes}</span>`:""}
+      <small>${esc(o.d)}</small></button>`;
+  }).join("");
+}
+function escolherAvanco(i){
+  const A=window.__avanco; if(!A)return;
+  const o=A.opcoes[i];
+  const jaTem=A.escolhas.filter(e=>e===o.k).length;
+  const podeRepetir=(o.k==="pv"||o.k==="pf");
+  // se já escolheu e não é repetível, clicar de novo desmarca
+  if(jaTem && !podeRepetir){ A.escolhas=A.escolhas.filter(e=>e!==o.k); }
+  else {
+    if(A.escolhas.length>=A.max){ toast("Já escolheu 2 avanços. Desmarque um para trocar."); return; }
+    A.escolhas.push(o.k);
+  }
+  $("#avancoLista").innerHTML=renderAvancos(A.opcoes);
+  $("#avancoContador").textContent=`${A.escolhas.length}/2 avanços`;
+  $("#avancoConfirmar").disabled = A.escolhas.length!==2;
+}
+function confirmarSubirNivel(){
+  const A=window.__avanco; if(!A)return;
+  const f=fichaPorId(A.id); if(!f)return;
+  f.nivel=A.novoNivel; f.patamar=A.novoPatamar;
+  const conquista=(f.nivel===2||f.nivel===5||f.nivel===8);
+  // conquistas automáticas do nível
+  if(conquista){ f.prof=(f.prof||1)+1; f.experiencias=f.experiencias||[]; f.experiencias.push({nome:"Nova Experiência (nv"+f.nivel+")",bonus:2}); }
+  // aplica os avanços escolhidos
+  const feitos=[];
+  const cont={};
+  A.escolhas.forEach(k=>cont[k]=(cont[k]||0)+1);
+  Object.entries(cont).forEach(([k,qtd])=>{
+    if(k==="pv"){ f.pvMax+=qtd; feitos.push(`+${qtd} PV`); }
+    else if(k==="pf"){ f.fadigaMax+=qtd; feitos.push(`+${qtd} Fadiga`); }
+    else if(k==="evasao"){ f.evasao+=qtd; f._manualEv=true; feitos.push(`+${qtd} Evasão`); }
+    else if(k==="prof"){ f.prof=(f.prof||1)+qtd; feitos.push(`+${qtd} Proficiência`); }
+    else if(k==="attr"){ pedirAtributos(f, "avanço de nível"); feitos.push("+1 em 2 atributos"); }
+    else if(k==="exp"){ feitos.push("+1 em 2 Experiências (ajuste na ficha)"); }
+    else if(k==="carta"){ feitos.push("carta de domínio adicional (escolha nas Cartas)"); }
+    else if(k==="subclasse"){ feitos.push("subclasse aprimorada (ajuste na ficha)"); }
+  });
+  // limiares sobem +1 por nível (recalc)
+  if(typeof recalcLimiares==="function") recalcLimiares(f);
+  logItem(`⇧ <b>${esc(f.nome)}</b> subiu para o <b>nível ${f.nivel}</b> (patamar ${f.patamar})${conquista?" +conquista":""}: ${feitos.join(" · ")}.`,"var(--hope)");
+  toast(`${f.nome} agora é nível ${f.nivel}!`);
+  window.__avanco=null;
+  fecharPoder(); save(); renderFichas(false); renderHotbar(); atualizaFichaSel();
+}
+// pede 2 atributos para o avanço "+1 em dois atributos"
+function pedirAtributos(f, motivo){
+  const as=prompt(`${motivo}: quais 2 atributos recebem +1? (ex: Instinto, Presença)`,"");
+  (as||"").split(",").map(s=>s.trim()).forEach(a=>{ if(f.atributos[a]!==undefined) f.atributos[a]++; });
 }
 
 // ============================================================
