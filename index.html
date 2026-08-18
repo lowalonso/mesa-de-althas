@@ -1,4 +1,4 @@
-<!-- BUILD:v-183746 -->
+<!-- BUILD:v-193201 -->
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1639,7 +1639,8 @@ function conectarFirebase(){
     marcaSinc("on");
   }catch(e){ console.warn("Firebase off:",e); marcaSinc("off"); primeiraLeitura=false; }
 }
-function salvarLocal(){ try{ if(store.ok) localStorage.setItem("althas_vtt",JSON.stringify(STATE)); }catch(e){} }
+function chaveLocal(){ return "althas_vtt_" + (SALA||"local"); }
+function salvarLocal(){ try{ if(store.ok) localStorage.setItem(chaveLocal(),JSON.stringify(STATE)); }catch(e){} }
 function save(){
   STATE._rev=Date.now(); // carimbo de edição
   salvarLocal();
@@ -1659,7 +1660,15 @@ function save(){
     },260);
   }
 }
-function loadLocal(){ try{const d=localStorage.getItem("althas_vtt"); if(d)STATE=mesclarEstado(STATE,JSON.parse(d));}catch(e){} }
+function loadLocal(){
+  try{
+    let d=localStorage.getItem(chaveLocal());
+    // migração única: se não há estado desta mesa mas existe o antigo global,
+    // só aproveita se for a mesma sala (evita vazar entre mesas). Senão, ignora.
+    if(!d && SALA){ /* mesas começam limpas — não herdam o estado global antigo */ }
+    if(d) STATE=mesclarEstado(STATE,JSON.parse(d));
+  }catch(e){}
+}
 
 // ---------- TELA DE ENTRADA ----------
 function montarEntrada(){
@@ -2198,6 +2207,7 @@ function iniciarUI(){
   }
   escutarCronica();
   if(typeof fxEscutar==="function") fxEscutar();
+  if(typeof escutarPrompts==="function") escutarPrompts();
 }
 // detecta se o usuário está no meio de uma edição de ficha (foco em campo do editor)
 function editandoFicha(){
@@ -2208,7 +2218,7 @@ function editandoFicha(){
 }
 
 loadLocal();
-console.log('%c MESA DE ALTHAS BUILD:v-183746 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
+console.log('%c MESA DE ALTHAS BUILD:v-193201 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
 // ============================================================
 // MÓDULO 2 — mesa, cenas, tokens, régua em área, fichas, galeria, mestre, música
 // ============================================================
@@ -2427,6 +2437,11 @@ function soltarToken(){
     const elD=document.querySelector(`.token[data-id="${drag.t.id}"]`); if(elD)elD.classList.remove("dragging");
     renderTokens(); save();
     const tag=$("#movTag"); if(tag)tag.classList.remove("on");
+    // ATAQUE DE OPORTUNIDADE: se um INIMIGO saiu do corpo a corpo de um guerreiro
+    // com a habilidade, oferece o ataque ao jogador dele (livro p.42).
+    if(drag.moved && drag.t.inimigo && typeof checarAtaqueOportunidade==="function"){
+      checarAtaqueOportunidade(drag.t, drag.ox, drag.oy);
+    }
     // movimento além de "próximo" exige teste de Agilidade (livro p.105)
     if(drag.moved && !al.livre && drag.t.fichaId){
       const f=STATE.fichas.find(x=>x.id===drag.t.fichaId);
@@ -2664,16 +2679,32 @@ function renderWizard(){
       </select>`;
   } else if(p===1){
     const sel=f.ancestralidade;
+    const outras=Object.keys(ANCESTRALIDADES).filter(n=>n!=="Ancestralidade Mista");
     conteudo=`<label class="fld">Escolha a ancestralidade</label>
-      <div class="grim-list" style="max-height:240px;overflow:auto">
+      <div class="grim-list" style="max-height:220px;overflow:auto">
         ${Object.keys(ANCESTRALIDADES).map(n=>{
           const habs=ANCESTRALIDADES[n]; const on=sel===n;
-          const resumo = Array.isArray(habs) ? habs.map(h=>h.n).join(" · ") : "escolha 2 habilidades de outras ancestralidades";
+          const resumo = (n==="Ancestralidade Mista") ? "misture 2 ancestralidades (1ª de uma, 2ª de outra)" : habs.map(h=>h.n).join(" · ");
           return `<button class="grim-op${on?' on':''}" style="${on?'border-color:var(--gold2)':''}" onclick="wizEscolheAnc('${esc(n)}')">
             <b>${n}</b> <small>${resumo}</small></button>`;
         }).join("")}
       </div>
-      ${sel?`<div class="poderTxt" style="font-size:12px;margin-top:8px">
+      ${sel==="Ancestralidade Mista"?`
+        <div style="margin-top:8px;padding:8px;border:1px solid var(--linha);border-radius:8px">
+          <p class="hint" style="margin:0 0 6px">Herança combinada: escolha a <b>1ª habilidade</b> de uma ancestralidade e a <b>2ª habilidade</b> de outra (Livro p.72).</p>
+          <label class="fld">1ª habilidade (vem de)</label>
+          <select class="txt" onchange="wizMistaSel(0,this.value)">
+            <option value="">— escolha —</option>
+            ${outras.map(n=>`<option value="${esc(n)}"${wizardEstado.mistaP1===n?" selected":""}>${n}: ${esc(ANCESTRALIDADES[n][0].n)}</option>`).join("")}
+          </select>
+          <label class="fld" style="margin-top:6px">2ª habilidade (vem de)</label>
+          <select class="txt" onchange="wizMistaSel(1,this.value)">
+            <option value="">— escolha —</option>
+            ${outras.map(n=>`<option value="${esc(n)}"${wizardEstado.mistaP2===n?" selected":""}>${n}: ${esc(ANCESTRALIDADES[n][1].n)}</option>`).join("")}
+          </select>
+          ${f.habAncestralidade?`<div class="poderTxt" style="font-size:12px;margin-top:8px">${esc(f.habAncestralidade)}</div>`:""}
+        </div>`
+      : sel?`<div class="poderTxt" style="font-size:12px;margin-top:8px">
         <b style="color:var(--gold2)">${esc(sel)}</b><br>${esc(f.habAncestralidade||"—")}</div>`:""}`;
   } else if(p===2){
     const sel=f.comunidade;
@@ -2757,9 +2788,29 @@ function wizAvancar(){ if(wizardEstado&&wizardEstado.passo<WIZARD_PASSOS.length-
 function wizVoltar(){ if(wizardEstado&&wizardEstado.passo>0){ wizardEstado.passo--; renderWizard(); } }
 function wizEscolheAnc(n){
   wizardEstado.f.ancestralidade=n;
-  const habs=ANCESTRALIDADES[n];
-  wizardEstado.f.habAncestralidade = Array.isArray(habs) ? habs.map(h=>`${h.n}: ${h.t}`).join(" ") : "";
+  if(n==="Ancestralidade Mista"){
+    // não preenche direto — o jogador escolhe as 2 habilidades nos seletores
+    wizardEstado.mistaP1=wizardEstado.mistaP1||""; wizardEstado.mistaP2=wizardEstado.mistaP2||"";
+    montarHabMista();
+  } else {
+    const habs=ANCESTRALIDADES[n];
+    wizardEstado.f.habAncestralidade = Array.isArray(habs) ? habs.map(h=>`${h.n}: ${h.t}`).join(" ") : "";
+  }
   renderWizard();
+}
+function wizMistaSel(qual, nome){
+  if(qual===0) wizardEstado.mistaP1=nome; else wizardEstado.mistaP2=nome;
+  montarHabMista(); renderWizard();
+}
+// monta o texto da habilidade combinada: 1ª habilidade de P1 + 2ª habilidade de P2
+function montarHabMista(){
+  const p1=wizardEstado.mistaP1, p2=wizardEstado.mistaP2;
+  const partes=[];
+  if(p1 && ANCESTRALIDADES[p1]){ const h=ANCESTRALIDADES[p1][0]; partes.push(`${h.n} (${p1}): ${h.t}`); }
+  if(p2 && ANCESTRALIDADES[p2]){ const h=ANCESTRALIDADES[p2][1]; partes.push(`${h.n} (${p2}): ${h.t}`); }
+  wizardEstado.f.habAncestralidade = partes.join(" ");
+  wizardEstado.f.ancestralidadeMista = (p1||p2) ? `${p1||"?"}/${p2||"?"}` : "";
+  wizardEstado.f.mistaP1=p1; wizardEstado.f.mistaP2=p2;   // preserva na ficha final
 }
 function wizEscolheCom(n){ wizardEstado.f.comunidade=n; const h=COMUNIDADES[n]; wizardEstado.f.habComunidade=`${h.n}: ${h.t}`; renderWizard(); }
 function wizEscolheClasse(n){
@@ -3015,9 +3066,9 @@ function fichaEditor(f){
       <div style="flex:1;min-width:150px"><label class="fld2">Armadura</label>
         <select class="txt" onchange="fEquipArmadura('${f.id}',this.value)">${optArmaduras(f.armadura,f.armaduraP)}</select></div>
     </div>
-    ${(()=>{const ap=armaPorNome(ARMAS_PAT,f.armaPrim);return ap?`<button class="armaBtn" onclick="acaoAtaque('${f.id}','p')"><span><b>${esc(ap.n)}</b> <small>(${ap.patamar}º)</small> · ${ap.atr} · ${ap.alc}${ap.hab&&ap.hab!=="—"?`<br><small style="color:var(--dim)">${esc(ap.hab)}</small>`:""}</span><span class="ad">${ap.dano} 🎲</span></button>`:"";})()}
-    ${(()=>{const as=armaPorNome(ARMAS_SEC_PAT,f.armaSec);return as?`<button class="armaBtn" onclick="acaoAtaque('${f.id}','s')" style="border-color:#8a68d6"><span><b>${esc(as.n)}</b> <small>(${as.patamar}º)</small> · ${as.atr} · ${as.alc}${as.hab&&as.hab!=="—"?`<br><small style="color:var(--dim)">${esc(as.hab)}</small>`:""}</span><span class="ad">${as.dano} 🎲</span></button>`:"";})()}
-    ${(()=>{const ar=armaduraPorNome(f.armadura);return ar?`<div class="hint" style="margin-top:4px">🛡 ${esc(ar.n)} <small>(${ar.patamar}º)</small> · limiares base ${ar.limMenor}/${ar.limGrave} · armadura ${ar.base}${ar.hab&&ar.hab!=="—"?` · ${esc(ar.hab)}`:""} <br><small style="color:var(--dim)">Limiares finais (base + nível ${f.nivel}): ${ar.limMenor+f.nivel}/${ar.limGrave+f.nivel}</small></div>`:"";})()}
+    ${(()=>{const ap=armaPorNome(ARMAS_PAT,f.armaPrim,f.armaPrimP);return ap?`<button class="armaBtn" onclick="acaoAtaque('${f.id}','p')"><span><b>${esc(ap.n)}</b> <small>(${ap.patamar}º)</small> · ${ap.atr} · ${ap.alc}${ap.hab&&ap.hab!=="—"?`<br><small style="color:var(--dim)">${esc(ap.hab)}</small>`:""}</span><span class="ad">${ap.dano} 🎲</span></button>`:"";})()}
+    ${(()=>{const as=armaPorNome(ARMAS_SEC_PAT,f.armaSec,f.armaSecP);return as?`<button class="armaBtn" onclick="acaoAtaque('${f.id}','s')" style="border-color:#8a68d6"><span><b>${esc(as.n)}</b> <small>(${as.patamar}º)</small> · ${as.atr} · ${as.alc}${as.hab&&as.hab!=="—"?`<br><small style="color:var(--dim)">${esc(as.hab)}</small>`:""}</span><span class="ad">${as.dano} 🎲</span></button>`:"";})()}
+    ${(()=>{const ar=armaduraPorNome(f.armadura,f.armaduraP);return ar?`<div class="hint" style="margin-top:4px">🛡 ${esc(ar.n)} <small>(${ar.patamar}º)</small> · limiares base ${ar.limMenor}/${ar.limGrave} · armadura ${ar.base}${ar.hab&&ar.hab!=="—"?` · ${esc(ar.hab)}`:""} <br><small style="color:var(--dim)">Limiares finais (base + nível ${f.nivel}): ${ar.limMenor+f.nivel}/${ar.limGrave+f.nivel}</small></div>`:"";})()}
 
     <label class="fld" style="margin-top:12px">Cartas de domínio (${(f.cartas||[]).length})</label>
     ${cartasDisp.length?`<div class="row" style="margin-bottom:5px">
@@ -3044,6 +3095,20 @@ function fichaEditor(f){
       <option value="">— selecione —</option>
       ${(typeof ANCESTRALIDADES!=="undefined"?Object.keys(ANCESTRALIDADES):[]).map(n=>`<option${f.ancestralidade===n?" selected":""}>${n}</option>`).join("")}
     </select>
+    ${f.ancestralidade==="Ancestralidade Mista"?`
+      <div style="margin-top:6px;padding:8px;border:1px solid var(--linha);border-radius:8px">
+        <p class="hint" style="margin:0 0 6px">Herança combinada: 1ª habilidade de uma ancestralidade + 2ª de outra (Livro p.72).</p>
+        <label class="fld">1ª habilidade (vem de)</label>
+        <select class="txt" onchange="fMistaSel('${f.id}',0,this.value)">
+          <option value="">— escolha —</option>
+          ${Object.keys(ANCESTRALIDADES).filter(n=>n!=="Ancestralidade Mista").map(n=>`<option value="${esc(n)}"${(f.mistaP1===n)?" selected":""}>${n}: ${esc(ANCESTRALIDADES[n][0].n)}</option>`).join("")}
+        </select>
+        <label class="fld" style="margin-top:6px">2ª habilidade (vem de)</label>
+        <select class="txt" onchange="fMistaSel('${f.id}',1,this.value)">
+          <option value="">— escolha —</option>
+          ${Object.keys(ANCESTRALIDADES).filter(n=>n!=="Ancestralidade Mista").map(n=>`<option value="${esc(n)}"${(f.mistaP2===n)?" selected":""}>${n}: ${esc(ANCESTRALIDADES[n][1].n)}</option>`).join("")}
+        </select>
+      </div>`:""}
     ${f.habAncestralidade?`<div class="poderTxt" style="font-size:12px;margin-top:4px">${esc(f.habAncestralidade)}</div>`:""}
     <label class="fld">Comunidade <span style="color:var(--dim);font-weight:400;font-size:10px">(carta de comunidade — preenche a habilidade)</span></label>
     <select class="txt" onchange="fComunidade('${f.id}',this.value)">
@@ -3051,6 +3116,11 @@ function fichaEditor(f){
       ${(typeof COMUNIDADES!=="undefined"?Object.keys(COMUNIDADES):[]).map(n=>`<option${f.comunidade===n?" selected":""}>${n}</option>`).join("")}
     </select>
     ${f.habComunidade?`<div class="poderTxt" style="font-size:12px;margin-top:4px">${esc(f.habComunidade)}</div>`:""}
+    ${f.comunidade==="Disciplinada"?`
+      <div style="margin-top:6px;padding:8px;border:1px solid var(--linha);border-radius:8px">
+        <label class="fld" style="margin:0 0 4px">Seus três princípios <span style="color:var(--dim);font-weight:400;font-size:10px">(ditados ou valores com que você cresceu)</span></label>
+        ${[0,1,2].map(i=>`<input class="txt" style="margin-bottom:4px" placeholder="Princípio ${i+1}" value="${esc((f.principios||[])[i]||"")}" onchange="fPrincipio('${f.id}',${i},this.value)">`).join("")}
+      </div>`:""}
     ${(f.experiencias||[]).length?`<label class="fld">Experiências</label>${f.experiencias.map(e=>`<span class="pill">${esc(e.nome)} ${e.bonus>=0?"+":""}${e.bonus}</span>`).join("")}`:""}
     <label class="fld" style="margin-top:10px">Notas</label>
     <textarea class="txt" onchange="fEdit('${f.id}','notas',this.value)">${esc(f.notas||"")}</textarea>
@@ -3257,13 +3327,27 @@ function fSubclasse(id,sub){const f=fichaPorId(id);f.subclasse=sub;f._habAuto=f.
 function fAncestralidade(id, nome){
   const f=fichaPorId(id); if(!f)return;
   f.ancestralidade=nome;
-  if(nome && typeof ANCESTRALIDADES!=="undefined" && ANCESTRALIDADES[nome]){
-    // monta "Nome: texto. Nome2: texto2." a partir das habilidades da ancestralidade
+  if(nome==="Ancestralidade Mista"){
+    // não preenche direto: aguarda os 2 seletores
+    montarHabMistaFicha(f);
+  } else if(nome && typeof ANCESTRALIDADES!=="undefined" && ANCESTRALIDADES[nome]){
     f.habAncestralidade = ANCESTRALIDADES[nome].map(h=>`${h.n}: ${h.t}`).join(" ");
   } else {
     f.habAncestralidade="";
   }
   save(); renderFichas(false); renderHotbar();
+}
+function fMistaSel(id, qual, nome){
+  const f=fichaPorId(id); if(!f)return;
+  if(qual===0) f.mistaP1=nome; else f.mistaP2=nome;
+  montarHabMistaFicha(f);
+  save(); renderFichas(false); renderHotbar();
+}
+function montarHabMistaFicha(f){
+  const partes=[];
+  if(f.mistaP1 && ANCESTRALIDADES[f.mistaP1]){ const h=ANCESTRALIDADES[f.mistaP1][0]; partes.push(`${h.n} (${f.mistaP1}): ${h.t}`); }
+  if(f.mistaP2 && ANCESTRALIDADES[f.mistaP2]){ const h=ANCESTRALIDADES[f.mistaP2][1]; partes.push(`${h.n} (${f.mistaP2}): ${h.t}`); }
+  f.habAncestralidade = partes.join(" ");
 }
 // Comunidade como CARTA: seleciona e preenche a habilidade
 function fComunidade(id, nome){
@@ -3276,6 +3360,13 @@ function fComunidade(id, nome){
     f.habComunidade="";
   }
   save(); renderFichas(false); renderHotbar();
+}
+// princípios da comunidade Disciplinada (3 ditados/valores)
+function fPrincipio(id, i, valor){
+  const f=fichaPorId(id); if(!f)return;
+  f.principios=f.principios||["","",""];
+  f.principios[i]=valor;
+  save();
 }
 function fArmadura(id,a){const f=fichaPorId(id);f.armadura=a;aplicarClasse(f);const arm=ARMADURAS.find(x=>x.n===a);if(arm){f.limMenor=+((arm.limiares||"0/0").split("/")[0])||f.limMenor;f.limGrave=+((arm.limiares||"0/0").split("/")[1])||f.limGrave;}f.armMarc=clamp(f.armMarc,0,f.armPts);save();renderFichas(false);}
 function chAttr(id,a,v){const f=fichaPorId(id);f.atributos[a]=clamp(f.atributos[a]+v,-3,6);save();renderFichas(false);renderHotbar();}
@@ -3570,27 +3661,52 @@ function iniciarEfeito(fichaId, carta){
     mostrarPoder(f,`${carta.n} (passiva)`,txt);
     return;
   }
+  // PREVIEW: mostra o texto da carta com botão "Usar" antes de resolver a ação.
+  // (grimório e escolhas já têm sua própria tela; passivas idem)
+  if(!window.__cartaPrevisualizada || window.__cartaPrevisualizada!==carta.n){
+    if(!(efObj&&efObj.subs&&efObj.subs.length) && !(efObj&&efObj.escolhas&&efObj.escolhas.length)){
+      mostrarPreviewCarta(f,carta,txt);
+      return;
+    }
+  }
+  window.__cartaPrevisualizada=null;
   // GRIMÓRIO: tem sub-habilidades — mostra as opções para escolher
   if(efObj&&efObj.subs&&efObj.subs.length){
     mostrarSubsGrimorio(f,carta,efObj.subs);
     return;
   }
   // ESCOLHAS: carta com múltiplos efeitos — o jogador ESCOLHE antes de resolver
-  // (mesmo padrão visual do grimório). A opção escolhida ajusta o efeito.
   if(efObj&&efObj.escolhas&&efObj.escolhas.length){
     mostrarEscolhasCarta(f,carta,efObj);
     return;
   }
-  // IMPORTANTE: o "custo" impresso na carta é o custo de RECORDAÇÃO (voltar do cofre à mão
-  // durante um descanso), NÃO um custo de uso. Só gasta Esperança quando o TEXTO manda
-  // ("Gaste N Pontos de Esperança"), o que é tratado no fluxo do efeito.
   if(!efObj||!efObj.passos.length){
-    // carta sem fluxo interativo: mostra o texto e deixa registrar uso (sem descontar nada)
     mostrarPoder(f,carta.n,txt);
     return;
   }
   EXEC={fichaId,carta,ef:efObj,passos:[...efObj.passos],i:0,alvos:[],resultado:null,custoPago:false};
   proximoPasso();
+}
+// tela de leitura da carta antes de usar
+function mostrarPreviewCarta(f,carta,txt){
+  const box=$("#poderModal"),body=$("#poderBody");
+  const cor=(typeof DOM_CORES!=="undefined"&&DOM_CORES[carta.dom])||"var(--gold)";
+  const corpo=esc(txt).replace(/\s*•\s*/g,"<br>• ");
+  window.__previewCarta={fid:f.id,carta};
+  body.innerHTML=`<h3 style="color:${cor}">${esc(carta.n)}${carta.dom?` <small style="color:var(--dim)">· ${esc(carta.dom)}${carta.nivel?" nv"+carta.nivel:""}</small>`:""}</h3>
+    <div class="poderTxt" style="font-size:13px;max-height:300px;overflow:auto">${corpo||"—"}</div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end;gap:6px">
+      <button class="btn" onclick="fecharPoder()">Fechar</button>
+      <button class="btn pri" onclick="confirmarUsarCarta()">⚡ Usar carta</button>
+    </div>`;
+  box.classList.add("on");
+}
+function confirmarUsarCarta(){
+  const p=window.__previewCarta; if(!p)return;
+  window.__previewCarta=null;
+  window.__cartaPrevisualizada=p.carta.n;  // pula o preview na 2ª chamada
+  fecharPoder();
+  iniciarEfeito(p.fid, p.carta);
 }
 
 function proximoPasso(){
@@ -4051,7 +4167,14 @@ function aplicarDanoAlvos(alvos,total,opts){
       const paDisp=(f.armPts||0)-(f.armMarc||0);
       // se o PJ tem PA disponível e o dano marcaria PV, oferece reduzir gravidade
       if(pv>0 && paDisp>0){
-        oferecerArmadura(f,t,total,pv,faixa);
+        // a decisão de usar armadura é do JOGADOR dono do personagem.
+        // se estou como MESTRE e o personagem tem outro dono, envia o prompt PRA ELE.
+        if(MESTRE && f.dono && f.dono!==EU && typeof enviarPromptArmadura==="function" && sincAtiva()){
+          enviarPromptArmadura(f,t,total,pv,faixa);
+          logItem(`🛡 <b>${esc(t.nome)}</b> pode usar Armadura — aguardando decisão de <b>${esc(f.dono)}</b>…`,"var(--gold2)");
+        } else {
+          oferecerArmadura(f,t,total,pv,faixa);
+        }
       } else {
         aplicarPVfinal(f,t,total,pv,faixa);
       }
@@ -4172,13 +4295,17 @@ function oferecerArmadura(f,t,total,pv,faixa){
   const nomeFaixa={3:"grave (3 PV)",2:"maior (2 PV)",1:"menor (1 PV)"};
   const reduzido=pv-1, nomeRed=reduzido<=0?"nenhum (0 PV)":nomeFaixa[reduzido];
   const paDisp=(f.armPts||0)-(f.armMarc||0);
+  // se EU sou o dono do personagem (jogador) e há sincronização, minha decisão
+  // volta pro mestre aplicar. Se sou o mestre resolvendo local, aplico direto.
+  const souDono = (!MESTRE && f.dono===EU) || (f.dono===EU);
+  const resolver = (souDono && !MESTRE && typeof sincAtiva==="function" && sincAtiva()) ? "resolverArmaduraRemoto" : "resolverArmadura";
   body.innerHTML=`<h3>🛡 ${esc(t.nome)} pode usar Armadura</h3>
     <p>O ataque causou <b>${total}</b> de dano — seria <b>${nomeFaixa[pv]}</b>.</p>
     <p>Marcar <b>1 Ponto de Armadura</b> (${paDisp} disponíveis) reduz para <b>${nomeRed}</b>.</p>
     <p class="hint">Regra: 1 PA por ataque reduz a gravidade em um limiar.</p>
     <div class="row" style="margin-top:14px;justify-content:flex-end">
-      <button class="btn" onclick="resolverArmadura('${f.id}','${t.id}',${total},${pv},false)">Sofrer ${nomeFaixa[pv]}</button>
-      <button class="btn pri" onclick="resolverArmadura('${f.id}','${t.id}',${total},${pv},true)">🛡 Marcar 1 PA → ${nomeRed}</button>
+      <button class="btn" onclick="${resolver}('${f.id}','${t.id}',${total},${pv},false)">Sofrer ${nomeFaixa[pv]}</button>
+      <button class="btn pri" onclick="${resolver}('${f.id}','${t.id}',${total},${pv},true)">🛡 Marcar 1 PA → ${nomeRed}</button>
     </div>`;
   box.classList.add("on");
 }
@@ -4189,6 +4316,50 @@ function resolverArmadura(fid,tid,total,pv,usar){
   if(usar){ f.armMarc=clamp((f.armMarc||0)+1,0,f.armPts); pvFinal=Math.max(0,pv-1);
     faixa={3:"maior",2:"menor",1:"nenhum",0:"nenhum"}[pv]; }
   aplicarPVfinal(f,t,total,pvFinal,faixa,usar);
+}
+// ===== PROMPT DE ARMADURA REMOTO (decisão vai pro jogador dono) =====
+// o mestre publica o pedido; o cliente do dono abre o modal e, ao decidir,
+// publica a resposta; o mestre aplica o resultado (fonte da verdade do estado).
+function enviarPromptArmadura(f,t,total,pv,faixa){
+  try{
+    firebase.database().ref("mesas/"+SALA+"/prompts").push({
+      tipo:"armadura", para:f.dono, fid:f.id, tid:t.id, total, pv, faixa, t:Date.now()
+    });
+  }catch(e){ oferecerArmadura(f,t,total,pv,faixa); } // fallback local
+}
+let _promptsEscutando=false, _promptsVistos={};
+function escutarPrompts(){
+  if(_promptsEscutando || !sincAtiva()) return; _promptsEscutando=true;
+  try{
+    firebase.database().ref("mesas/"+SALA+"/prompts").limitToLast(8).on("child_added",snap=>{
+      const p=snap.val(), k=snap.key; if(!p||_promptsVistos[k])return; _promptsVistos[k]=1;
+      if(Date.now()-(p.t||0)>60000) return; // ignora antigos
+      if(p.tipo==="armadura" && p.para===EU){
+        const f=STATE.fichas.find(x=>x.id===p.fid), t=cenaAtual().tokens.find(x=>x.id===p.tid);
+        if(f&&t){ oferecerArmadura(f,t,p.total,p.pv,p.faixa); }
+      }
+      if(p.tipo==="oportunidade" && p.para===EU){
+        const f=STATE.fichas.find(x=>x.id===p.fid), t=cenaAtual().tokens.find(x=>x.id===p.tid);
+        if(f&&t && typeof oferecerAtaqueOportunidade==="function"){ oferecerAtaqueOportunidade(f,t); }
+      }
+      if(p.tipo==="armadura_resp" && MESTRE){
+        // o mestre aplica a decisão do jogador
+        const f=STATE.fichas.find(x=>x.id===p.fid), t=cenaAtual().tokens.find(x=>x.id===p.tid);
+        if(f&&t){ resolverArmadura(p.fid,p.tid,p.total,p.pv,p.usar); }
+      }
+    });
+  }catch(e){}
+}
+// quando o JOGADOR decide, envia a resposta (o mestre aplica). Sobrescreve resolverArmadura
+// só quando o modal veio de um prompt remoto.
+function resolverArmaduraRemoto(fid,tid,total,pv,usar){
+  fecharPoder();
+  try{
+    firebase.database().ref("mesas/"+SALA+"/prompts").push({
+      tipo:"armadura_resp", fid, tid, total, pv, usar, t:Date.now()
+    });
+    toast(usar?"Você marcou 1 PA — o mestre aplica o resultado.":"Você optou por sofrer o dano.");
+  }catch(e){ resolverArmadura(fid,tid,total,pv,usar); }
 }
 function curarAlvo(a,n){ const t=cenaAtual().tokens.find(x=>x.id===a.id); if(!t)return;
   const f=t.fichaId?STATE.fichas.find(x=>x.id===t.fichaId):null;
@@ -4459,18 +4630,20 @@ function renderHotbar(){
 function menuPoderes(id,ev){
   if(ev)ev.stopPropagation();
   const f=STATE.fichas.find(x=>x.id===id); if(!f)return;
+  // extrai o nome real da habilidade (texto antes do primeiro ":")
+  const nomeHab=(txt)=>{ if(!txt)return""; const n=(txt.split(":")[0]||"").trim(); return (n && n.length<50)?n:""; };
   const ops=[];
-  if(f.habClasse) ops.push({k:"classe",ic:"✹",n:"Habilidade de Classe"});
-  if(f.habSubclasse) ops.push({k:"subclasse",ic:"◆",n:"Subclasse"});
-  if(f.ancestralidade||f.habAncestralidade) ops.push({k:"ancestralidade",ic:"❖",n:"Ancestralidade"+(f.ancestralidade?" — "+f.ancestralidade:"")});
-  if(f.comunidade||f.habComunidade) ops.push({k:"comunidade",ic:"⌂",n:"Comunidade"+(f.comunidade?" — "+f.comunidade:"")});
+  if(f.habClasse){ const nh=nomeHab(f.habClasse); ops.push({k:"classe",ic:"✹",n:nh||"Habilidade de Classe",sub:nh?"Classe":""}); }
+  if(f.habSubclasse){ const nh=nomeHab(f.habSubclasse); ops.push({k:"subclasse",ic:"◆",n:nh||"Subclasse",sub:nh?(f.subclasse||"Subclasse"):""}); }
+  if(f.ancestralidade||f.habAncestralidade){ const nh=nomeHab(f.habAncestralidade); ops.push({k:"ancestralidade",ic:"❖",n:nh||("Ancestralidade"+(f.ancestralidade?" — "+f.ancestralidade:"")),sub:f.ancestralidade||""}); }
+  if(f.comunidade||f.habComunidade){ const nh=nomeHab(f.habComunidade); ops.push({k:"comunidade",ic:"⌂",n:nh||("Comunidade"+(f.comunidade?" — "+f.comunidade:"")),sub:f.comunidade||""}); }
   if(!ops.length){ toast("Nenhum poder registrado nesta ficha."); return; }
   const pop=$("#tokenPop"); // reaproveita o popup flutuante
   pop.innerHTML=`<button class="tpClose" onclick="fecharTokenPop()">✕</button>
     <b class="tpNome">◈ Poderes</b>
     <div class="grim-list" style="margin-top:8px">
       ${ops.map(o=>`<button class="grim-op" onclick="fecharTokenPop();${o.k==='classe'?`acaoHab('${f.id}','classe')`:`acaoPoder('${f.id}','${o.k}')`}">
-        <b>${o.ic} ${esc(o.n)}</b></button>`).join("")}
+        <b>${o.ic} ${esc(o.n)}</b>${o.sub?`<small>${esc(o.sub)}</small>`:""}</button>`).join("")}
     </div>`;
   pop.classList.add("on");
   // posiciona acima da hotbar, centralizado
@@ -4523,6 +4696,71 @@ function acaoAtaque(id,qual){
     if(!seguir) return;
   }
   _resolverAtaque(f,arma,dn,hab,bonusTeste,qual,[{id:marcado.id,nome:marcado.nome}]);
+}
+// ============ ATAQUE DE OPORTUNIDADE (Guerreiro, livro p.42) ============
+// Quando um inimigo sai do corpo a corpo de um guerreiro com a habilidade,
+// oferece o ataque de reação ao jogador dele.
+function temAtaqueOportunidade(f){
+  const txt=((f.habClasse||"")+" "+(f.habSubclasse||"")).toLowerCase();
+  return /ataque de oportunidade/.test(txt) || (f.classe||"").toLowerCase()==="guerreiro";
+}
+function checarAtaqueOportunidade(inimTk, ox, oy){
+  const g=cenaAtual().grid||60;
+  // guerreiros que ESTAVAM corpo a corpo (≤1.5 célula) na origem e agora não estão
+  const distA=(x,y)=>Math.hypot(x-ox,y-oy)/g;
+  const distB=(x,y)=>Math.hypot(x-inimTk.x,y-inimTk.y)/g;
+  cenaAtual().tokens.forEach(t=>{
+    if(!t.fichaId) return;
+    const f=STATE.fichas.find(x=>x.id===t.fichaId); if(!f||!temAtaqueOportunidade(f)) return;
+    const estavaCac = distA(t.x,t.y)<=1.6;
+    const saiu = distB(t.x,t.y)>1.6;
+    if(estavaCac && saiu){
+      // é o jogador dono quem decide (ou o mestre, se estiver controlando)
+      const souEu = (f.dono===EU) || (MESTRE && (!f.dono || f.dono===EU));
+      if(souEu){
+        oferecerAtaqueOportunidade(f, inimTk);
+      } else if(MESTRE && f.dono && typeof firebase!=="undefined" && typeof sincAtiva==="function" && sincAtiva()){
+        // avisa o jogador dono via prompt remoto
+        try{ firebase.database().ref("mesas/"+SALA+"/prompts").push({tipo:"oportunidade",para:f.dono,fid:f.id,tid:inimTk.id,t:Date.now()}); }catch(e){}
+        logItem(`⚡ <b>${esc(inimTk.nome)}</b> saiu do alcance de <b>${esc(f.nome)}</b> — ataque de oportunidade disponível para ${esc(f.dono)}.`,"var(--gold2)");
+      }
+    }
+  });
+}
+function oferecerAtaqueOportunidade(f, inimTk){
+  const box=$("#poderModal"),body=$("#poderBody");
+  window.__ataqueOp={fid:f.id,tid:inimTk.id};
+  body.innerHTML=`<h3 style="color:var(--ember)">⚡ Ataque de Oportunidade</h3>
+    <p><b>${esc(inimTk.nome)}</b> tentou sair do seu alcance corpo a corpo.</p>
+    <p class="hint">Faça um teste de reação (atributo à sua escolha) contra a Dificuldade dele (${inimTk.dif||inimTk.evasao||"?"}). Em sucesso, escolha 1 efeito (2 no crítico): impedir o movimento, causar dano da arma principal, ou mover-se junto.</p>
+    <div class="row" style="margin-top:12px;justify-content:flex-end;gap:6px">
+      <button class="btn" onclick="fecharPoder();window.__ataqueOp=null">Deixar passar</button>
+      <button class="btn pri" onclick="resolverAtaqueOportunidade()">↩ Fazer o ataque</button>
+    </div>`;
+  box.classList.add("on");
+}
+function resolverAtaqueOportunidade(){
+  const a=window.__ataqueOp; if(!a)return; window.__ataqueOp=null;
+  const f=STATE.fichas.find(x=>x.id===a.fid); const inimTk=cenaAtual().tokens.find(x=>x.id===a.tid);
+  if(!f||!inimTk){ fecharPoder(); return; }
+  fecharPoder();
+  $("#fichaAtiva").value=f.id;
+  // teste de reação: usa o melhor atributo físico (jogador pode ajustar mod na tela)
+  const atr=["Agilidade","Força","Instinto"].reduce((best,at)=>(f.atributos[at]||0)>(f.atributos[best]||0)?at:best,"Agilidade");
+  const dif=inimTk.dif||inimTk.evasao||10;
+  window.__ehReacao=true;   // teste de reação: não gera Esperança/Medo
+  rolarDualidadeCb(`↩ Ataque de Oportunidade · reação de ${atr}`, f.atributos[atr]||0, inimTk.nome, (res)=>{
+    const passou = res.crit || res.total>=dif;
+    if(!passou){ logItem(`⚡ <b>${esc(f.nome)}</b> tenta o Ataque de Oportunidade em <b>${esc(inimTk.nome)}</b>: <b>${res.total}</b> vs Dif ${dif} — falhou.`,"var(--dim)"); return; }
+    logItem(`⚡ <b>${esc(f.nome)}</b> acerta o Ataque de Oportunidade em <b>${esc(inimTk.nome)}</b>! ${res.crit?"(crítico — escolha 2 efeitos)":"(escolha 1 efeito)"}`,"var(--ember)");
+    // rola o dano da arma principal e aplica ao inimigo
+    const arma=armaPorNome(ARMAS_PAT,f.armaPrim,f.armaPrimP);
+    const dn=parseDano(arma?arma.dano:f.danoPrim)||{qtd:1,faces:8,bonus:0};
+    const prof=f.prof||1;
+    rolarDanoCb(dn.faces, prof, dn.bonus, `Dano · ${arma?arma.n:"arma"} (oportunidade)`, (tot)=>{
+      aplicarDanoAlvos([{id:inimTk.id,nome:inimTk.nome}], tot);
+    });
+  }, f);
 }
 // move o token do atacante até ficar adjacente ao alvo, com animação, e então executa cb.
 // Se o deslocamento passar do alcance de movimento livre (Próximo), pede teste de Agilidade.
