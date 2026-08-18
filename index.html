@@ -1,4 +1,4 @@
-<!-- BUILD:v-051420 -->
+<!-- BUILD:v-133350 -->
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -56,7 +56,7 @@ body.area-placing #world{cursor:crosshair}
 .token{position:absolute;display:flex;align-items:center;justify-content:center;cursor:grab;user-select:none;
   border:2px solid var(--gold);border-radius:50%;background:var(--card2) center/cover no-repeat;
   font-family:'Cinzel',serif;font-weight:700;box-shadow:0 3px 12px rgba(0,0,0,.6);
-  transition:left .12s ease-out,top .12s ease-out,box-shadow .15s,transform .1s}
+  transition:left .35s cubic-bezier(.4,0,.2,1),top .35s cubic-bezier(.4,0,.2,1),box-shadow .15s,transform .1s}
 .token:active{cursor:grabbing;transform:scale(1.08);box-shadow:0 0 0 3px var(--gold2),0 6px 20px rgba(0,0,0,.8);transition:transform .05s}
 .token.hit{animation:tokenHit .5s ease-out}
 @keyframes tokenHit{
@@ -1845,12 +1845,16 @@ function fichaDoJogador(nome){
 }
 function atualizaFichaSel(){
   const sel=$("#fichaAtiva"),cur=sel.value;
-  // jogador só vê a própria; mestre vê todas
+  // só entram no seletor personagens que estão NA MESA (com token na cena atual);
+  // ao remover o token, o personagem sai daqui — a ficha continua salva no painel.
+  const naMesa=f=>cenaAtual().tokens.some(t=>t.fichaId===f.id);
+  // jogador só vê a própria; mestre vê todas (as em mesa)
   const minha=fichaDoJogador(EU);
-  const lista=MESTRE?STATE.fichas:(minha?[minha]:[]);
+  let lista=MESTRE?STATE.fichas:(minha?[minha]:[]);
+  lista=lista.filter(naMesa);
   sel.innerHTML=`<option value="">— livre —</option>`+lista.map(f=>`<option value="${f.id}">${esc(f.nome||"Sem nome")}</option>`).join("");
-  // jogador: prioriza a própria ficha. mestre: mantém a seleção anterior se ainda existir.
-  if(!MESTRE && minha){ sel.value=minha.id; }
+  // jogador: prioriza a própria ficha (se em mesa). mestre: mantém a seleção anterior se ainda existir.
+  if(!MESTRE && minha && lista.some(f=>f.id===minha.id)){ sel.value=minha.id; }
   else if([...sel.options].some(o=>o.value===cur)){ sel.value=cur; }
 }
 
@@ -1879,12 +1883,21 @@ function rolarDualidade(label,modExtra,alvoNome){
     if(temAjuda){ f._vantagemAjuda=0; }
     hEl.firstChild.textContent=hope;fEl.firstChild.textContent=fear;
     const total=hope+fear+mod+vantTot;
+    const ehReacao=!!window.__ehReacao; window.__ehReacao=false; // consome a flag
     let tipo,cor,som,extra="";
-    if(hope===fear){tipo="CRÍTICO!";cor="crit";som="crit";extra="Ganha 1 Esperança e limpa 1 Fadiga.";
-      if(f){f.esperanca=clamp((f.esperanca||0)+1,0,6);f.fadiga=clamp((f.fadiga||0)-1,0,f.fadigaMax||6);}}
-    else if(hope>fear){tipo=`${total} — ESPERANÇA`;cor="hope";som="hope";extra="Ganhe 1 Esperança.";
-      if(f)f.esperanca=clamp((f.esperanca||0)+1,0,6);}
-    else{tipo=`${total} — MEDO`;cor="fear";som="fear";extra="Mestre ganha 1 Medo.";setMedo(STATE.medo+1,true);}
+    if(hope===fear){tipo="CRÍTICO!";cor="crit";som="crit";
+      if(ehReacao){ extra="Reação crítica: ignora todos os efeitos (sem Esperança/Fadiga)."; }
+      else { extra="Ganha 1 Esperança e limpa 1 Fadiga.";
+        if(f){f.esperanca=clamp((f.esperanca||0)+1,0,6);f.fadiga=clamp((f.fadiga||0)-1,0,f.fadigaMax||6);} }
+    }
+    else if(hope>fear){tipo=`${total} — ESPERANÇA`;cor="hope";som="hope";
+      if(ehReacao){ extra="Teste de reação: não gera Esperança."; }
+      else { extra="Ganhe 1 Esperança."; if(f)f.esperanca=clamp((f.esperanca||0)+1,0,6); }
+    }
+    else{tipo=`${total} — MEDO`;cor="fear";som="fear";
+      if(ehReacao){ extra="Teste de reação: o mestre não ganha Medo."; }
+      else { extra="Mestre ganha 1 Medo."; setMedo(STATE.medo+1,true); }
+    }
     res.textContent=tipo;res.className=cor;
     det.innerHTML=`☀<b style="color:var(--hope)">${hope}</b> ☾<b style="color:var(--fear2)">${fear}</b>`+
       (mod?` ${mod>0?"+":"−"}${Math.abs(mod)}`:"")+(vantTot?` ${vantTot>0?"+":"−"}${Math.abs(vantTot)}<small>(d6)</small>`:"")+
@@ -1932,16 +1945,20 @@ function resetOverlayDados(){
 // ROLAGEM DO MESTRE: um d20, som assustador, tema sombrio
 function rolarD20Mestre(){
   const mod=diceMod;
-  // som sombrio discreto
+  diceMod=0; const mv=$("#modV"); if(mv)mv.textContent="+0";
+  // usa o overlay animado de dados (mesma animação da rolagem, versão d20 do mestre)
+  if(typeof rolarD20Cb==="function"){
+    rolarD20Cb("d20 do Mestre", mod, "", null, null);
+    return;
+  }
+  // fallback (sem overlay): só crônica
   if(STATE.som){ try{ actx=actx||new(AudioContext||webkitAudioContext)(); if(actx.state==="suspended")actx.resume(); somResultado("mestre"); }catch(e){} }
   const r=d(20), total=r+mod;
   let nota="";
-  if(r===20){ nota="CRÍTICO do Mestre!"; if(STATE.som){ try{ tone(58,actx.currentTime+.02,1.2,"sawtooth",.22); tone(55,actx.currentTime+.02,1.2,"sine",.18);}catch(e){} } }
+  if(r===20){ nota="CRÍTICO do Mestre!"; }
   else if(r===1){ nota="Falha crítica do Mestre"; }
-  // vai SÓ para a crônica (todos veem lá), sem overlay de dados na tela
   logItem(`☠ <b style="color:#b9a3ec">Mestre</b> rola d20: <b style="color:#c9b6f2">${total}</b> <small>[${r}]${mod?(mod>0?" +":" −")+Math.abs(mod):""}${nota?" · "+nota:""}</small>`,"#7a5cc9");
   toast(`🎲 Mestre rolou d20: ${total}${nota?" — "+nota:""}`);
-  diceMod=0; const mv=$("#modV"); if(mv)mv.textContent="+0";
 }
 function fecharOverlay(ev){ if(ev&&ev.target!==$("#diceOverlay")&&!ev.target.closest(".btn"))return; $("#diceOverlay").classList.remove("on"); resetOverlayDados(); if(typeof fxDispararFila==="function") fxDispararFila(); }
 function lightbox(src){ $("#lightImg").src=src; $("#lightbox").classList.add("on"); }
@@ -2022,6 +2039,9 @@ function abrirOpcoesRolagem(f,cfg){
       <button class="ro-v" data-v="1" onclick="selVant(1)">Vantagem +d6</button>
       <button class="ro-v" data-v="-1" onclick="selVant(-1)">Desvantagem −d6</button>
     </div>
+    <div class="ro-vant" style="margin-top:6px">
+      <button class="ro-v" id="roReacao" onclick="selReacao()">↩ Teste de reação <small>(não gera Esperança/Medo)</small></button>
+    </div>
     <div class="row" style="margin-top:14px;justify-content:flex-end;gap:8px">
       <button class="btn pri" onclick="confirmarRolagem()">🎲 Rolar</button>
       <button class="btn" onclick="fecharPoder()">Cancelar</button>
@@ -2036,7 +2056,12 @@ function selExp(i){
 function selVant(v){
   const c=window.__rollCfg; if(!c)return;
   c.vant=v;
-  document.querySelectorAll(".ro-v").forEach(b=>b.classList.toggle("on",+b.dataset.v===v));
+  document.querySelectorAll(".ro-v[data-v]").forEach(b=>b.classList.toggle("on",+b.dataset.v===v));
+}
+function selReacao(){
+  const c=window.__rollCfg; if(!c)return;
+  c.reacao=!c.reacao;
+  const b=$("#roReacao"); if(b)b.classList.toggle("on",!!c.reacao);
 }
 function confirmarRolagem(){
   const c=window.__rollCfg; if(!c)return;
@@ -2053,7 +2078,8 @@ function confirmarRolagem(){
   fecharPoder();
   // aplica vantagem/desvantagem via variável global usada pela rolagem
   const vantAntes=diceVant; diceVant=c.vant;
-  const rot = cfg.label + (usouExp?` · ${usouExp.nome} (+${usouExp.bonus})`:"");
+  window.__ehReacao=!!c.reacao;   // teste de reação: não gera Esperança/Medo (livro p.101)
+  const rot = (c.reacao?"↩ Reação · ":"") + cfg.label + (usouExp?` · ${usouExp.nome} (+${usouExp.bonus})`:"");
   if(cfg.onRoll){ cfg.onRoll(mod,c.vant,usouExp); }
   else { rolarDualidade(rot, mod, cfg.alvo); }
   diceVant=vantAntes;
@@ -2182,7 +2208,7 @@ function editandoFicha(){
 }
 
 loadLocal();
-console.log('%c MESA DE ALTHAS BUILD:v-051420 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
+console.log('%c MESA DE ALTHAS BUILD:v-133350 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
 // ============================================================
 // MÓDULO 2 — mesa, cenas, tokens, régua em área, fichas, galeria, mestre, música
 // ============================================================
@@ -2202,7 +2228,8 @@ function renderCenasBar(){
 }
 function trocarCena(id){ STATE.cenaAtual=id; tokenSel=null; ALVO=null;
   const c=cenaAtual(); $("#gridSize").value=c.grid; $("#gridV").textContent=c.grid; $("#gridOn").checked=c.gridOn;
-  mostrarMapa(); desenharGrid(); renderTokens(); renderCenasBar(); renderCenario(); resetView(); save(); }
+  mostrarMapa(); desenharGrid(); renderTokens(); renderCenasBar(); renderCenario(); resetView(); save();
+  if(typeof atualizaFichaSel==="function")atualizaFichaSel(); if(typeof renderHotbar==="function")renderHotbar(); }
 function novaCena(){ const n=prompt("Nome da nova cena:","Cena "+(STATE.cenas.length+1)); if(n===null)return;
   const id="cena"+uid(); STATE.cenas.push({id,nome:n||("Cena "+(STATE.cenas.length+1)),grid:60,gridOn:true,mapa:null,mapaW:0,mapaH:0,tokens:[]});
   STATE.cenaAtual=id; renderCenasBar(); trocarCena(id); }
@@ -2263,28 +2290,58 @@ function novoToken(t){const c=cenaAtual(),g=c.grid;
   c.tokens.push(Object.assign({id:uid(),x:(-cam.x+innerWidth/2)/cam.z,y:(-cam.y+innerHeight/2)/cam.z,tam:1,nome:"Token",cor:"#e0662f",img:null,fichaId:null,hp:null,hpMax:null},t));
   renderTokens();save();}
 function renderTokens(){
-  const layer=$("#tokensLayer");layer.innerHTML="";const c=cenaAtual(),g=c.grid;
+  const layer=$("#tokensLayer");const c=cenaAtual(),g=c.grid;
+  // RENDER INCREMENTAL: atualiza elementos existentes (as transições CSS de
+  // left/top animam o movimento), cria só os novos e remove os que saíram.
+  // Recriar tudo (innerHTML="") matava as animações e teleportava os tokens.
+  const existentes={};
+  layer.querySelectorAll(".token").forEach(el=>existentes[el.dataset.id]=el);
+  const vivos={};
   c.tokens.forEach(t=>{
-    const el=document.createElement("div");
-    el.className="token"+(tokenSel===t.id?" sel":"")+(ALVO===t.id?" alvo":"");
-    el.dataset.id=t.id;
+    vivos[t.id]=true;
     const sz=g*(t.tam||1)*.92;
-    el.style.cssText=`left:${t.x-sz/2}px;top:${t.y-sz/2}px;width:${sz}px;height:${sz}px;border-color:${ALVO===t.id?"#f2a06a":t.cor};font-size:${sz*.42}px;color:${t.cor};`+(t.img?`background-image:url(${t.img});`:"");
-    if(ALVO===t.id) el.style.boxShadow="0 0 0 3px #f2a06a, 0 0 18px rgba(242,160,106,.6)";
-    if(!t.img)el.textContent=(t.nome||"?")[0].toUpperCase();
-    const nm=document.createElement("span");nm.className="tkname";nm.textContent=t.nome;el.appendChild(nm);
-    // condições: jogador não vê condições de inimigos (informação do mestre)
-    const podeVerRecursos = MESTRE || t.fichaId; // PJs mostram sempre; inimigos só p/ mestre
-    if((t.cond||[]).length && podeVerRecursos){const cw=document.createElement("span");cw.className="tkcond";
-      cw.innerHTML=t.cond.map(c=>`<i style="background:${CONDICOES[c]||'#888'}" title="${c} (clique p/ remover)" onclick="event.stopPropagation();removerCondicao('${t.id}','${c}')">${iconCond(c)}</i>`).join("");
-      el.appendChild(cw);}
+    let el=existentes[t.id];
+    const novo=!el;
+    if(novo){
+      el=document.createElement("div");
+      el.dataset.id=t.id;
+      layer.appendChild(el);
+      // nasce já na posição (sem transição de entrada)
+      el.style.transition="none";
+      el.style.left=(t.x-sz/2)+"px"; el.style.top=(t.y-sz/2)+"px";
+      requestAnimationFrame(()=>{ el.style.transition=""; });
+    }
+    // (re)vincula o drag apontando para o objeto t atual (muda a cada sync)
+    if(el._dragFn) el.removeEventListener("pointerdown", el._dragFn);
+    el._dragFn=ev=>iniciarDragToken(ev,t);
+    el.addEventListener("pointerdown", el._dragFn);
+    el.className="token"+(tokenSel===t.id?" sel":"")+(ALVO===t.id?" alvo":"");
+    // posição/tamanho via propriedades individuais (preserva transition)
+    if(!el.classList.contains("dragging")){
+      el.style.left=(t.x-sz/2)+"px"; el.style.top=(t.y-sz/2)+"px";
+    }
+    el.style.width=sz+"px"; el.style.height=sz+"px";
+    el.style.borderColor=ALVO===t.id?"#f2a06a":t.cor;
+    el.style.fontSize=(sz*.42)+"px"; el.style.color=t.cor;
+    el.style.backgroundImage=t.img?`url(${t.img})`:"";
+    el.style.boxShadow=ALVO===t.id?"0 0 0 3px #f2a06a, 0 0 18px rgba(242,160,106,.6)":"";
+    // conteúdo interno (nome/condições/vida) — re-render simples, não afeta left/top
+    const podeVerRecursos = MESTRE || t.fichaId;
     const f=t.fichaId?STATE.fichas.find(x=>x.id===t.fichaId):null;
     const hpMax=f?f.pvMax:t.hpMax,hp=f?(f.pvMax-f.pv):t.hp;
-    // barra de vida: PJs sempre; inimigos só o mestre vê
-    if(hpMax && podeVerRecursos){const bar=document.createElement("span");bar.className="tkhp";bar.innerHTML=`<i style="width:${clamp(hp/hpMax*100,0,100)}%"></i>`;el.appendChild(bar);}
-    el.addEventListener("pointerdown",ev=>iniciarDragToken(ev,t));
-    layer.appendChild(el);
+    let inner="";
+    if(!t.img) inner+=esc((t.nome||"?")[0].toUpperCase());
+    inner+=`<span class="tkname">${esc(t.nome||"")}</span>`;
+    if((t.cond||[]).length && podeVerRecursos){
+      inner+=`<span class="tkcond">${t.cond.map(cc=>`<i style="background:${CONDICOES[cc]||'#888'}" title="${esc(cc)} (clique p/ remover)" onclick="event.stopPropagation();removerCondicao('${t.id}','${esc(cc)}')">${iconCond(cc)}</i>`).join("")}</span>`;
+    }
+    if(hpMax && podeVerRecursos){
+      inner+=`<span class="tkhp"><i style="width:${clamp(hp/hpMax*100,0,100)}%"></i></span>`;
+    }
+    if(el._innerCache!==inner){ el.innerHTML=inner; el._innerCache=inner; }
   });
+  // remove tokens que não existem mais
+  Object.keys(existentes).forEach(id=>{ if(!vivos[id]) existentes[id].remove(); });
 }
 function iniciarDragToken(ev,t){ if(modoRegua)return; ev.stopPropagation();
   // Descobre se ESTE jogador pode arrastar este token:
@@ -2472,9 +2529,10 @@ function tkRemover(id){
   if(ALVO===id)ALVO=null;
   fecharTokenPop();save();renderTokens();
   if(typeof renderHotbar==="function")renderHotbar();
+  if(typeof atualizaFichaSel==="function")atualizaFichaSel();  // sai do seletor "personagem ativo"
   if(ehPJ) toast(`${nome} saiu da cena. A ficha continua salva — é só recolocar o token quando quiser.`);
 }
-function limparMesa(){if(!confirm("Limpar mapa e tokens desta cena?"))return;const c=cenaAtual();c.mapa=null;c.mapaW=0;c.mapaH=0;c.tokens=[];c.zonas=[];ALVO=null;mostrarMapa();desenharGrid();renderTokens();save();}
+function limparMesa(){if(!confirm("Limpar mapa e tokens desta cena?"))return;const c=cenaAtual();c.mapa=null;c.mapaW=0;c.mapaH=0;c.tokens=[];c.zonas=[];ALVO=null;mostrarMapa();desenharGrid();renderTokens();save();if(typeof atualizaFichaSel==="function")atualizaFichaSel();}
 // remove todas as zonas persistentes (Tronco, Véu, etc.) da cena
 function limparZonas(){const c=cenaAtual();if(!c.zonas||!c.zonas.length){toast("Nenhuma zona no cenário.");return;}if(!confirm(`Remover ${c.zonas.length} zona(s) persistente(s) do cenário?`))return;c.zonas=[];save();toast("Zonas removidas.");}
 
@@ -3235,7 +3293,7 @@ function usarCartaDaFicha(id,i){
 }
 function rolarAttrFicha(id,a){const f=fichaPorId(id);$("#fichaAtiva").value=id;atualizaFichaSel();$("#fichaAtiva").value=id;rolarDualidade("Teste de "+a,f.atributos[a],alvoAtual());}
 function atacarFicha(id){$("#fichaAtiva").value=id;atacarCom(id,"p");}
-function addTokenDeFicha(id){const f=fichaPorId(id);novoToken({nome:f.nome||"PJ",fichaId:f.id,cor:NACAO_CORES[f.nacao]||"#e0662f",img:f.img||null});fecharPaineis();}
+function addTokenDeFicha(id){const f=fichaPorId(id);novoToken({nome:f.nome||"PJ",fichaId:f.id,cor:NACAO_CORES[f.nacao]||"#e0662f",img:f.img||null});fecharPaineis();if(typeof atualizaFichaSel==="function")atualizaFichaSel();}
 
 // ---- SUBIR NÍVEL ----
 function subirNivel(id){
@@ -3955,8 +4013,82 @@ function aplicarDanoAlvos(alvos,total,opts){
 function aplicarPVfinal(f,t,total,pv,faixa,usouPA){
   if(pv>0){ f.pv=clamp(f.pv+pv,0,f.pvMax);
     logItem(`💥 <b>${esc(t.nome)}</b> sofre ${total} → dano ${faixa}${usouPA?" (reduzido por Armadura)":""}, marca ${pv} PV (${f.pvMax-f.pv}/${f.pvMax})`,"var(--ember)");
-    if(f.pvMax-f.pv<=0) logItem(`☠ <b>${esc(t.nome)}</b> marcou o último PV — faça um movimento de morte!`,"var(--fear2)");
+    if(f.pvMax-f.pv<=0){
+      logItem(`☠ <b>${esc(t.nome)}</b> marcou o último PV — movimento de morte!`,"var(--fear2)");
+      setTimeout(()=>abrirMovimentoMorte(f.id), 900);
+    }
   } else logItem(`🛡 <b>${esc(t.nome)}</b> — dano ${usouPA?"reduzido pela Armadura a ":"reduzido a "}nenhum, nenhum PV marcado.`,"var(--gold2)");
+  save(); renderTokens(); renderFichas(false); renderHotbar();
+}
+// ============ MOVIMENTOS DE MORTE (Livro Básico p.108) ============
+function abrirMovimentoMorte(fid){
+  const f=STATE.fichas.find(x=>x.id===fid); if(!f)return;
+  const box=$("#poderModal"),body=$("#poderBody");
+  body.innerHTML=`<h3 style="color:var(--fear2)">☠ ${esc(f.nome)} enfrenta a morte</h3>
+    <p class="hint">Você marcou seu último Ponto de Vida. Escolha um <b>movimento de morte</b> (Livro Básico, p.108):</p>
+    <div class="grim-list">
+      <button class="grim-op" onclick="morteSacrificio('${f.id}')">
+        <b>⚔ Sacrifício Glorioso</b>
+        <small>Abrace a morte: com aprovação do mestre, faça uma última ação com sucesso crítico automático — então atravesse o véu da morte.</small>
+      </button>
+      <button class="grim-op" onclick="morteEvitar('${f.id}')">
+        <b>🛌 Evitar a Morte</b>
+        <small>Fique inconsciente e a cena piora. Não pode agir nem ser alvo de ataques; acorda ao recuperar 1+ PV ou no descanso longo. Role o Dado de Esperança: se ≤ seu nível, ganha uma cicatriz (perde 1 espaço de Esperança permanentemente).</small>
+      </button>
+      <button class="grim-op" onclick="morteArriscar('${f.id}')">
+        <b>🎲 Arriscar Tudo</b>
+        <small>Role os Dados de Dualidade. Esperança maior: fica de pé e recupera PV/PF igual ao Dado de Esperança. Medo maior: atravessa o véu da morte. Crítico: fica de pé e recupera TODOS os PV e PF.</small>
+      </button>
+    </div>
+    <div class="row" style="margin-top:10px;justify-content:flex-end">
+      <button class="btn" onclick="fecharPoder()">Decidir depois</button>
+    </div>`;
+  box.classList.add("on");
+}
+function morteSacrificio(fid){
+  const f=STATE.fichas.find(x=>x.id===fid); if(!f)return;
+  fecharPoder();
+  logItem(`⚔ <b>${esc(f.nome)}</b> escolhe o <b>Sacrifício Glorioso</b>: sua última ação é um sucesso crítico automático. Descreva o momento — então o personagem atravessa o véu da morte.`,"var(--gold2)");
+  toast(`${f.nome}: sacrifício glorioso — última ação com crítico automático.`);
+}
+function morteEvitar(fid){
+  const f=STATE.fichas.find(x=>x.id===fid); if(!f)return;
+  fecharPoder();
+  // fica inconsciente (condição) e rola o Dado de Esperança p/ cicatriz
+  f.cond=f.cond||[];
+  const t=cenaAtual().tokens.find(x=>x.fichaId===fid);
+  if(t){ t.cond=t.cond||[]; if(!t.cond.includes("Adormecido")) t.cond.push("Adormecido"); }
+  const hope=d(12);
+  const cicatriz=hope<=(f.nivel||1);
+  logItem(`🛌 <b>${esc(f.nome)}</b> escolhe <b>Evitar a Morte</b>: cai inconsciente e a cena piora. Dado de Esperança: <b>${hope}</b> vs nível ${f.nivel||1} — ${cicatriz?`<b style="color:var(--fear2)">CICATRIZ!</b> Marque um X num espaço de Esperança (permanente).`:"sem cicatriz."}`,"var(--fear2)");
+  if(cicatriz){
+    f.esperancaMax=Math.max(0,(f.esperancaMax||6)-1);
+    f.esperanca=Math.min(f.esperanca||0, f.esperancaMax);
+    if(f.esperancaMax<=0) logItem(`⚰ <b>${esc(f.nome)}</b> perdeu o último espaço de Esperança — é hora de encerrar a jornada deste personagem.`,"var(--fear2)");
+  }
+  save(); renderTokens(); renderFichas(false); renderHotbar();
+  toast(`${f.nome} está inconsciente.${cicatriz?" Ganhou uma cicatriz.":""}`);
+}
+function morteArriscar(fid){
+  const f=STATE.fichas.find(x=>x.id===fid); if(!f)return;
+  fecharPoder();
+  // rola a dualidade SEM gerar recursos (é um momento especial)
+  const hope=d(12), fear=d(12);
+  if(hope===fear){
+    f.pv=0; f.fadiga=0;
+    logItem(`🎲 <b>${esc(f.nome)}</b> ARRISCA TUDO: ☀${hope} ☾${fear} — <b style="color:var(--gold2)">CRÍTICO!</b> Fica de pé e recupera TODOS os PV e Fadiga!`,"var(--gold2)");
+    toast(`${f.nome} desafia a morte e vence! Tudo recuperado.`);
+  } else if(hope>fear){
+    // recupera PV/PF somando 'hope', jogador divide — aplicamos primeiro em PV, sobra em PF
+    let pts=hope;
+    const pvRec=Math.min(pts, f.pv); f.pv-=pvRec; pts-=pvRec;
+    const pfRec=Math.min(pts, f.fadiga||0); f.fadiga=(f.fadiga||0)-pfRec;
+    logItem(`🎲 <b>${esc(f.nome)}</b> ARRISCA TUDO: ☀${hope} ☾${fear} — <b style="color:var(--hope)">ESPERANÇA!</b> Fica de pé e recupera ${hope} pontos (${pvRec} PV + ${pfRec} Fadiga). <small>Se preferir outra divisão, ajuste na ficha.</small>`,"var(--hope)");
+    toast(`${f.nome} fica de pé! +${hope} pontos recuperados.`);
+  } else {
+    logItem(`🎲 <b>${esc(f.nome)}</b> ARRISCA TUDO: ☀${hope} ☾${fear} — <b style="color:var(--fear2)">MEDO… ${esc(f.nome)} atravessa o véu da morte.</b>`,"var(--fear2)");
+    toast(`${f.nome} atravessou o véu da morte…`);
+  }
   save(); renderTokens(); renderFichas(false); renderHotbar();
 }
 // modal: gastar 1 PA para reduzir a gravidade em um limiar (grave→maior→menor→nenhum)
@@ -4069,10 +4201,14 @@ function rolarDualidadeCb(label,mod,alvoNome,cb){
     clearInterval(anim);hEl.classList.remove("rolling");fEl.classList.remove("rolling");
     const hope=d(12),fear=d(12),total=hope+fear+mod;
     hEl.firstChild.textContent=hope;fEl.firstChild.textContent=fear;
+    const ehReacao=!!window.__ehReacao; window.__ehReacao=false;
     let tipo,cor,som;
-    if(hope===fear){tipo="CRÍTICO!";cor="crit";som="crit";if(f){f.esperanca=clamp((f.esperanca||0)+1,0,6);f.fadiga=clamp((f.fadiga||0)-1,0,f.fadigaMax);}}
-    else if(hope>fear){tipo=`${total} — ESPERANÇA`;cor="hope";som="hope";if(f)f.esperanca=clamp((f.esperanca||0)+1,0,6);}
-    else{tipo=`${total} — MEDO`;cor="fear";som="fear";setMedo(STATE.medo+1,true);}
+    if(hope===fear){tipo="CRÍTICO!";cor="crit";som="crit";
+      if(!ehReacao && f){f.esperanca=clamp((f.esperanca||0)+1,0,6);f.fadiga=clamp((f.fadiga||0)-1,0,f.fadigaMax);}}
+    else if(hope>fear){tipo=`${total} — ESPERANÇA`;cor="hope";som="hope";
+      if(!ehReacao && f)f.esperanca=clamp((f.esperanca||0)+1,0,6);}
+    else{tipo=`${total} — MEDO`;cor="fear";som="fear";
+      if(!ehReacao) setMedo(STATE.medo+1,true);}
     res.textContent=tipo;res.className=cor;
     det.innerHTML=`☀<b style="color:var(--hope)">${hope}</b> ☾<b style="color:var(--fear2)">${fear}</b>`+(mod?` ${mod>0?"+":"−"}${Math.abs(mod)}`:"");
     somResultado(som);
@@ -4332,6 +4468,8 @@ function avancarParaAtacar(f, meuTk, alvoTk, cb){
     meuTk.x=destX; meuTk.y=destY;
     const sz=g*(meuTk.tam||1)*.92;
     if(el){ el.style.left=(destX-sz/2)+"px"; el.style.top=(destY-sz/2)+"px"; }
+    // transmite a animação de avanço para os outros jogadores verem também
+    if(typeof fxTransmitir==="function") fxTransmitir("avanco", destX, destY, {tid:meuTk.id, dur:500});
     logItem(`🏃 <b>${esc(f.nome)}</b> avança até <b>${esc(alvoTk.nome)}</b> para atacar corpo a corpo.`,"#c9a25a");
     setTimeout(()=>{
       if(el)el.style.transition="";
@@ -4455,19 +4593,29 @@ function _resolverAtaque(f,arma,dn,hab,bonusTeste,qual,sel){
         const alcQuad = alcanceEmQuadrados((arma&&arma.alc)||"Muito próximo");
         const ehDistancia = alcQuad >= 6; // próximo, distante, muito distante
         const meuTk = cenaAtual().tokens.find(t=>t.fichaId===f.id);
-        // efeito de ataque entra na FILA: só aparece quando o overlay de dados fecha
+        // efeito de ataque: TRANSMITE JÁ aos outros jogadores (eles veem na hora);
+        // localmente entra na FILA (aparece quando o overlay de dados fechar)
         if(sel.length){
           sel.forEach(a=>{ const t=cenaAtual().tokens.find(x=>x.id===a.id);
             if(t){ const tx=t.x,ty=t.y, ox=meuTk?meuTk.x:undefined, oy=meuTk?meuTk.y:undefined;
-              fxEnfileirar(()=>{
+              const disparar=(soLocal)=>{
+                const fxFn = soLocal?fxReproduzir:null;
                 if(ehDistancia){
-                  if(ehMagico) fxBroadcast("projetilMagico",tx,ty,{ox,oy,cor:"#a97bff"});
-                  else fxBroadcast("flecha",tx,ty,{ox,oy});
+                  if(ehMagico) (fxFn||fxBroadcast)("projetilMagico",tx,ty,{ox,oy,cor:"#a97bff"});
+                  else (fxFn||fxBroadcast)("flecha",tx,ty,{ox,oy});
                 } else {
-                  if(ehMagico) fxBroadcast("magico",tx,ty,{cor:"#a97bff"});
-                  else fxBroadcast("golpe",tx,ty,{arma:(arma&&arma.n)||""});
+                  if(ehMagico) (fxFn||fxBroadcast)("magico",tx,ty,{cor:"#a97bff"});
+                  else (fxFn||fxBroadcast)("golpe",tx,ty,{arma:(arma&&arma.n)||""});
                 }
-              }); } });
+              };
+              // transmite imediatamente (só remoto)
+              if(typeof fxTransmitir==="function"){
+                if(ehDistancia) fxTransmitir(ehMagico?"projetilMagico":"flecha",tx,ty,{ox,oy,cor:"#a97bff"});
+                else fxTransmitir(ehMagico?"magico":"golpe",tx,ty,{cor:"#a97bff",arma:(arma&&arma.n)||""});
+              }
+              // reprodução local na fila (atrás do overlay)
+              fxEnfileirar(()=>disparar(true));
+            } });
         }
         const evAlvos=sel.map(a=>{ const t=cenaAtual().tokens.find(x=>x.id===a.id); const af=t&&t.fichaId?STATE.fichas.find(x=>x.id===t.fichaId):null;
           return {alvo:a, ev:(af?af.evasao:(t&&t.evasao)|| (t&&t.dif) || 10)}; });
@@ -4813,11 +4961,11 @@ function renderBestLista(){
     // formata as habilidades: quebra em "Nome (tipo): descrição" separando cada uma
     const habFmt=formatarHabilidades(a.hab);
     const img=(STATE.bestImgs&&STATE.bestImgs[gi])||null;
-    return `<div class="best-card" style="--tc:${TIPO_COR[a.tipo]||'var(--gold)'}">
+    return `<div class="best-card" draggable="true" data-gi="${gi}" ondragstart="bestDragStart(event,${gi})" style="--tc:${TIPO_COR[a.tipo]||'var(--gold)'}">
       <div class="bc-head" onclick="this.parentElement.classList.toggle('open')">
         <div class="bc-headL">
           ${img?`<span class="bc-tokimg" style="background-image:url(${img})"></span>`:`<span class="bc-tokimg bc-tokvazio">${esc(a.n[0])}</span>`}
-          <div><b>${esc(a.n)}</b><span class="bc-tipo">${a.tipo} · ${a.pat}º patamar</span></div>
+          <div><b>${esc(a.n)}</b><span class="bc-tipo">${a.tipo} · ${a.pat}º patamar <span style="color:var(--dim)">· arraste p/ o mapa</span></span></div>
         </div>
         <div class="bc-stats">
           <span title="Dificuldade">◈ ${a.dif}</span>
@@ -4903,15 +5051,20 @@ function parsearHabilidadesInimigo(txt){
   }
   return out;
 }
-function porInimigoNaMesa(gi){
+function porInimigoNaMesa(gi, worldX, worldY){
   try{
     const a=BESTIARIO[gi]; if(!a){alert("Inimigo não encontrado (índice "+gi+").");return;}
     const dn=parseDano(a.atqDano);
     const c=cenaAtual();
     if(!c){alert("Erro: nenhuma cena ativa. Crie uma cena primeiro.");return;}
     if(!c.tokens) c.tokens=[];
-    // posição no centro da visão atual
-    const cx=(-cam.x+innerWidth/2)/(cam.z||1), cy=(-cam.y+innerHeight/2)/(cam.z||1);
+    // posição: onde soltou (drag) OU centro da visão atual
+    let cx, cy;
+    if(typeof worldX==="number" && typeof worldY==="number"){
+      cx=worldX; cy=worldY;
+    } else {
+      cx=(-cam.x+innerWidth/2)/(cam.z||1); cy=(-cam.y+innerHeight/2)/(cam.z||1);
+    }
     const jaLa=c.tokens.filter(t=>Math.abs(t.x-cx)<40&&Math.abs(t.y-cy)<40).length;
     const off=jaLa*((c.grid||60)*0.6);
     const novo={id:uid(),tam:1,fichaId:null,
@@ -4924,12 +5077,18 @@ function porInimigoNaMesa(gi){
       atqDano:a.atqDano, atqFaces:dn?dn.faces:6, atqQtd:dn?dn.qtd:1, atqMod:dn?dn.bonus:0,
       hab:a.hab, exp:a.exp, tipoAdv:a.tipo, patAdv:a.pat, bestId:gi};
     c.tokens.push(novo);
-    fecharPaineis();
     renderTokens(); save();
     logItem(`⚔ Mestre invocou <b style="color:${TIPO_COR[a.tipo]}">${esc(a.n)}</b> (${a.tipo} ${a.pat}º pat · Dif ${a.dif} · ${a.pv} PV)`,TIPO_COR[a.tipo]||"var(--ember)");
-    // move a câmera para o token, garantindo que ele fique visível
-    centralizarEm(novo.x, novo.y);
-    toast(`✓ ${a.n} na mesa (cena "${c.nome||"?"}")`);
+    if(typeof worldX==="number"){
+      // arrastou: mantém o painel? não — fecha para ver o mapa
+      fecharPaineis();
+      toast(`✓ ${a.n} solto na mesa`);
+    } else {
+      fecharPaineis();
+      centralizarEm(novo.x, novo.y);
+      toast(`✓ ${a.n} na mesa (cena "${c.nome||"?"}")`);
+    }
+    return novo;
   }catch(err){
     alert("Falha ao colocar inimigo: "+(err&&err.message?err.message:err));
   }
@@ -4946,22 +5105,52 @@ function centralizarEm(wx,wy){
 // ataque do inimigo contra um PJ (usado pelo mestre)
 function inimigoAtaca(tid){
   const t=cenaAtual().tokens.find(x=>x.id===tid); if(!t||!t.inimigo)return;
-  // escolher alvo PJ
+  const pjs=cenaAtual().tokens.filter(x=>x.fichaId);
+  if(!pjs.length){
+    toast("Nenhum personagem-jogador na cena. Coloque a ficha de um jogador na mesa (botão '◉ À mesa' na ficha) para poder atacá-lo.");
+    return;
+  }
+  // se há um alvo já MARCADO (🎯) e ele é um PJ, ataca ele direto — sem abrir seletor
+  if(ALVO){
+    const alvoMarc=pjs.find(x=>x.id===ALVO);
+    if(alvoMarc){ _inimigoIniciarAtaque(t,[{id:alvoMarc.id,nome:alvoMarc.nome}]); return; }
+  }
+  // se só existe UM PJ na cena, ataca ele direto
+  if(pjs.length===1){ _inimigoIniciarAtaque(t,[{id:pjs[0].id,nome:pjs[0].nome}]); return; }
+  // senão, abre o seletor de alvo
   abrirSeletorAlvo("aliado",{n:t.atqArma||"Ataque",dom:"Lâmina",custo:0},(sel)=>{
-    if(!sel.length){toast("Selecione um alvo.");return;}
-    // se for ataque corpo a corpo e o alvo estiver longe, o inimigo AVANÇA até ele (animado)
-    const ehCorpoACorpo = /corpo a corpo|cac/i.test(t.atqAlc||"");
-    const alvoTk = cenaAtual().tokens.find(x=>x.id===sel[0].id);
-    const g=cenaAtual().grid||60;
-    if(ehCorpoACorpo && alvoTk){
-      const dist=Math.hypot(alvoTk.x-t.x, alvoTk.y-t.y)/g;
-      if(dist>1.5){
-        avancarInimigo(t, alvoTk, ()=>_inimigoResolveAtaque(t,sel));
-        return;
-      }
-    }
-    _inimigoResolveAtaque(t,sel);
+    if(!sel.length){toast("Selecione um alvo tocando nele na lista.");return;}
+    _inimigoIniciarAtaque(t,sel);
   });
+}
+// decide se avança (corpo a corpo longe) e então resolve
+function _inimigoIniciarAtaque(t, sel){
+  // pergunta vantagem/desvantagem (adversário: 2d20 maior/menor — livro p.162)
+  const box=$("#poderModal"),body=$("#poderBody");
+  body.innerHTML=`<h3>⚔ ${esc(t.nome)} ataca ${esc(sel.map(a=>a.nome).join(", "))}</h3>
+    <p class="hint">Adversários com vantagem ou desvantagem rolam 2d20 e usam o maior/menor (Livro p.162).</p>
+    <div class="ro-vant">
+      <button class="ro-v on" onclick="_inimigoRolarCom('${t.id}',0)">Normal (1d20)</button>
+      <button class="ro-v" onclick="_inimigoRolarCom('${t.id}',1)">Vantagem (2d20, maior)</button>
+      <button class="ro-v" onclick="_inimigoRolarCom('${t.id}',-1)">Desvantagem (2d20, menor)</button>
+    </div>
+    <div class="row" style="margin-top:10px;justify-content:flex-end"><button class="btn" onclick="fecharPoder()">Cancelar</button></div>`;
+  window.__inimAtq={t,sel};
+  box.classList.add("on");
+}
+function _inimigoRolarCom(tid, vant){
+  const A=window.__inimAtq; if(!A)return;
+  fecharPoder();
+  const {t,sel}=A; window.__inimAtq=null;
+  t._vantAtq=vant;
+  const ehCorpoACorpo = /corpo a corpo|cac/i.test(t.atqAlc||"");
+  const alvoTk = cenaAtual().tokens.find(x=>x.id===sel[0].id);
+  const g=cenaAtual().grid||60;
+  if(ehCorpoACorpo && alvoTk){
+    const dist=Math.hypot(alvoTk.x-t.x, alvoTk.y-t.y)/g;
+    if(dist>1.5){ avancarInimigo(t, alvoTk, ()=>_inimigoResolveAtaque(t,sel)); return; }
+  }
+  _inimigoResolveAtaque(t,sel);
 }
 // move o token do inimigo até ficar adjacente ao alvo, com animação, e então ataca
 function avancarInimigo(t, alvoTk, cb){
@@ -4974,6 +5163,8 @@ function avancarInimigo(t, alvoTk, cb){
   t.x=destX; t.y=destY;
   const sz=g*(t.tam||1)*.92;
   if(el){ el.style.left=(destX-sz/2)+"px"; el.style.top=(destY-sz/2)+"px"; }
+  // transmite a animação de avanço para os outros jogadores verem também
+  if(typeof fxTransmitir==="function") fxTransmitir("avanco", destX, destY, {tid:t.id, dur:500});
   logItem(`🏃 <b>${esc(t.nome)}</b> avança até <b>${esc(alvoTk.nome)}</b>.`,"var(--ember)");
   setTimeout(()=>{ if(el)el.style.transition=""; renderTokens(); save(); cb&&cb(); }, 560);
 }
@@ -4982,21 +5173,37 @@ function _inimigoResolveAtaque(t, sel){
   const alvoNome=sel.map(a=>a.nome).join(", ");
   somRolagem();
   setTimeout(()=>{
-    const rol=d(20), tot=rol+(t.atqBonus||0);
-    logItem(`⚔ <b>${esc(t.nome)}</b> ataca ${esc(alvoNome)}: d20(${rol})${t.atqBonus>=0?"+":""}${t.atqBonus} = <b>${tot}</b>`,"var(--ember)");
+    const vant=t._vantAtq||0; t._vantAtq=0;
+    let rol, rolDetalhe;
+    if(vant!==0){
+      const r1=d(20), r2=d(20);
+      rol = vant>0 ? Math.max(r1,r2) : Math.min(r1,r2);
+      rolDetalhe = `2d20[${r1},${r2}]${vant>0?"↑":"↓"}`;
+    } else { rol=d(20); rolDetalhe=`d20(${rol})`; }
+    const tot=rol+(t.atqBonus||0);
+    const crit = rol===20; // sucesso crítico do adversário (livro p.150)
+    logItem(`⚔ <b>${esc(t.nome)}</b> ataca ${esc(alvoNome)}: ${rolDetalhe}${t.atqBonus>=0?"+":""}${t.atqBonus} = <b>${tot}</b>${crit?' · <b style="color:var(--gold2)">CRÍTICO!</b>':""}`,"var(--ember)");
     // efeito visual do ataque (corpo a corpo → golpe; distância → projétil)
     const alvoTk=cenaAtual().tokens.find(x=>x.id===sel[0].id);
     if(alvoTk && typeof fxBroadcast==="function"){
       const ehDist=/dist|próximo|proximo/i.test(t.atqAlc||"");
-      if(ehDist) fxBroadcast("flecha", alvoTk.x, alvoTk.y, {de:{x:t.x,y:t.y}});
+      if(ehDist) fxBroadcast("flecha", alvoTk.x, alvoTk.y, {ox:t.x, oy:t.y});
       else fxBroadcast("golpe", alvoTk.x, alvoTk.y, {arma:t.atqArma||""});
     }
-    const acertou=sel.filter(a=>{const af=STATE.fichas.find(x=>x.id===(cenaAtual().tokens.find(k=>k.id===a.id)||{}).fichaId); return !af||tot>=af.evasao;});
+    // crítico acerta automaticamente (p.150); senão compara com a Evasão
+    const acertou=crit?sel:sel.filter(a=>{const af=STATE.fichas.find(x=>x.id===(cenaAtual().tokens.find(k=>k.id===a.id)||{}).fichaId); return !af||tot>=af.evasao;});
     const errou=sel.filter(a=>!acertou.includes(a));
     errou.forEach(a=>logItem(`✕ errou <b>${esc(a.nome)}</b>`,"var(--dim)"));
     if(acertou.length){
-      setTimeout(()=>rolarDanoCb(t.atqFaces||6,t.atqQtd||1,t.atqMod||0,`Dano · ${t.atqArma}`,(tot2)=>{
-        aplicarDanoAlvos(acertou,tot2);
+      setTimeout(()=>rolarDanoCb(t.atqFaces||6,t.atqQtd||1,t.atqMod||0,`Dano · ${t.atqArma}${crit?" (CRÍTICO)":""}`,(tot2,rolls)=>{
+        let danoFinal=tot2;
+        if(crit){
+          // dano crítico: valor MÁXIMO possível dos dados + a rolagem (p.150 = mesma regra dos PJs, p.100)
+          const mx=(t.atqFaces||6)*(t.atqQtd||1);
+          danoFinal=mx+tot2;
+          logItem(`⚡ Dano crítico: máx ${mx} + rolagem ${tot2} = <b style="color:var(--gold2)">${danoFinal}</b>`,"var(--gold2)");
+        }
+        aplicarDanoAlvos(acertou,danoFinal);
       }),350);
     }
     somResultado(acertou.length?"dano":"falha");
@@ -5151,6 +5358,32 @@ function rolarReacaoPJ(fid, atr, dif){
       });
     }});
 }
+
+// ============ ARRASTAR CRIATURA DO BESTIÁRIO PARA O MAPA ============
+function bestDragStart(ev, gi){
+  try{ ev.dataTransfer.setData("text/plain", "best:"+gi); ev.dataTransfer.effectAllowed="copy"; }catch(e){}
+  window.__bestArrastando=gi;
+}
+// registra a área do mapa como zona de drop (uma vez só)
+(function ligarDropBestiario(){
+  function init(){
+    const board=document.getElementById("board");
+    if(!board){ setTimeout(init,300); return; }
+    board.addEventListener("dragover", ev=>{ ev.preventDefault(); try{ev.dataTransfer.dropEffect="copy";}catch(e){} });
+    board.addEventListener("drop", ev=>{
+      ev.preventDefault();
+      let gi=window.__bestArrastando;
+      try{ const d=ev.dataTransfer.getData("text/plain"); if(d&&d.startsWith("best:")) gi=parseInt(d.slice(5)); }catch(e){}
+      if(gi==null||isNaN(gi)) return;
+      // converte a posição da tela para coordenada do mundo
+      const wx=(ev.clientX - cam.x)/(cam.z||1);
+      const wy=(ev.clientY - cam.y)/(cam.z||1);
+      porInimigoNaMesa(gi, wx, wy);
+      window.__bestArrastando=null;
+    });
+  }
+  init();
+})();
 // ============================================================
 // FX — efeitos visuais de magia sobre o mapa (partículas em canvas)
 // Renderiza no #fxLayer, em coordenadas do MUNDO (segue pan/zoom via cam).
@@ -5163,7 +5396,10 @@ let _fxMeuId=null;
 function fxBroadcast(tipo, wx, wy, extra){
   // dispara localmente já
   fxReproduzir(tipo, wx, wy, extra||{});
-  // e transmite para os outros
+  fxTransmitir(tipo, wx, wy, extra);
+}
+// só envia aos outros clientes (sem reproduzir localmente)
+function fxTransmitir(tipo, wx, wy, extra){
   try{
     if(typeof sincAtiva==="function" && sincAtiva()){
       if(!_fxMeuId) _fxMeuId = (typeof EU!=="undefined"?EU:"") + "_" + Math.random().toString(36).slice(2,7);
@@ -5214,14 +5450,44 @@ function fxReproduzir(tipo, wx, wy, extra){
     case "dano": fxDano(wx,wy); if(extra.tid)fxSacodeToken(extra.tid); break;
     case "morte": fxMorte(wx,wy,extra.nome); break;
     case "area": fxMarcarArea(wx,wy,extra.raio,extra.cor,extra.dur); break;
+    case "avanco": fxAvancoToken(extra.tid, wx, wy, extra.dur); break;
   }
+}
+// anima o deslocamento de um token até (wx,wy) — usado para os OUTROS clientes
+// verem o avanço animado em vez do token teleportar quando o estado sincroniza.
+function fxAvancoToken(tid, wx, wy, dur){
+  try{
+    if(!tid) return;
+    const t=(typeof cenaAtual==="function")?cenaAtual().tokens.find(x=>x.id===tid):null;
+    const el=document.querySelector(`.token[data-id="${tid}"]`);
+    dur=dur||500;
+    if(t){ t.x=wx; t.y=wy; }   // atualiza o estado local já (o sync remoto vai confirmar)
+    if(el){
+      const g=(typeof cenaAtual==="function"&&cenaAtual().grid)||60;
+      const sz=g*((t&&t.tam)||1)*.92;
+      el.style.transition=`left ${dur}ms cubic-bezier(.4,0,.2,1), top ${dur}ms cubic-bezier(.4,0,.2,1)`;
+      el.style.left=(wx-sz/2)+"px"; el.style.top=(wy-sz/2)+"px";
+      setTimeout(()=>{ el.style.transition=""; if(typeof renderTokens==="function")renderTokens(); }, dur+80);
+    }
+  }catch(e){}
 }
 // fila de efeitos pendentes: guardados enquanto o overlay de dados está aberto,
 // disparados quando o jogador clica em "continuar" (fecha o overlay). Assim quem
 // rolou vê a animação no mapa junto com o resto da mesa, sem o overlay tapando.
-let fxFila=[];
-function fxEnfileirar(fn){ if(typeof fn==="function") fxFila.push(fn); }
+// FAILSAFE: se o overlay não fechar em ~4s, os efeitos disparam sozinhos para
+// nunca ficarem presos (e para o resto da mesa não esperar demais).
+let fxFila=[], _fxFilaTimer=null;
+function fxEnfileirar(fn){
+  if(typeof fn!=="function") return;
+  // se o overlay de dados NEM está aberto, dispara imediatamente
+  const ov=document.getElementById("diceOverlay");
+  if(!ov || !ov.classList.contains("on")){ fn(); return; }
+  fxFila.push(fn);
+  clearTimeout(_fxFilaTimer);
+  _fxFilaTimer=setTimeout(fxDispararFila, 4000);
+}
 function fxDispararFila(){
+  clearTimeout(_fxFilaTimer); _fxFilaTimer=null;
   const fila=fxFila.slice(); fxFila=[];
   fila.forEach((fn,i)=>setTimeout(fn, i*120)); // pequeno escalonamento entre efeitos
 }
