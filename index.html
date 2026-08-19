@@ -1,5 +1,4 @@
-<!-- BUILD:v-001519 -->
-
+<!-- BUILD:v-010419 (fix: texto completo habilidades inimigo) -->
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1543,7 +1542,19 @@ let STATE={
 };
 const store={ok:false};
 try{localStorage.setItem("__t","1");localStorage.removeItem("__t");store.ok=true;}catch(e){}
-function cenaAtual(){ return STATE.cenas.find(c=>c.id===STATE.cenaAtual)||STATE.cenas[0]; }
+// A cena que EU estou vendo é LOCAL (cada pessoa vê a cena que quiser).
+// Não sincroniza pelo Firebase — só o conteúdo das cenas (mapas/tokens) é compartilhado.
+let MINHA_CENA = null;
+function chaveMinhaCena(){ return "althas_cena_" + (SALA||"local") + "_" + (EU||"eu"); }
+function minhaCenaId(){
+  if(MINHA_CENA && STATE.cenas.some(c=>c.id===MINHA_CENA)) return MINHA_CENA;
+  // tenta recuperar do localStorage (persistência por pessoa)
+  try{ const s=localStorage.getItem(chaveMinhaCena()); if(s && STATE.cenas.some(c=>c.id===s)){ MINHA_CENA=s; return s; } }catch(e){}
+  // fallback: primeira cena
+  MINHA_CENA = (STATE.cenas[0]||{}).id || null;
+  return MINHA_CENA;
+}
+function cenaAtual(){ return STATE.cenas.find(c=>c.id===minhaCenaId())||STATE.cenas[0]; }
 
 // ---------- FIREBASE (reaproveitado do mesa-de-althas) ----------
 const FIREBASE={apiKey:"AIzaSyCC-Djvea0DZcbPYOxNGiBp5xAhkrb_d94",authDomain:"dh-mapa-althas.firebaseapp.com",databaseURL:"https://dh-mapa-althas-default-rtdb.firebaseio.com",projectId:"dh-mapa-althas",storageBucket:"dh-mapa-althas.firebasestorage.app",messagingSenderId:"389282086322",appId:"1:389282086322:web:e5812f52bebff34467f8ab"};
@@ -2245,7 +2256,7 @@ function editandoFicha(){
 }
 
 loadLocal();
-console.log('%c MESA DE ALTHAS BUILD:v-001519 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
+console.log('%c MESA DE ALTHAS BUILD:v-010419 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
 // ============================================================
 // MÓDULO 2 — mesa, cenas, tokens, régua em área, fichas, galeria, mestre, música
 // ============================================================
@@ -2259,22 +2270,27 @@ function resetView(){ cam={x:120,y:70,z:1}; applyCam(); }
 // ---------- CENAS ----------
 function renderCenasBar(){
   const bar=$("#cenasBar");
+  const atual=minhaCenaId();
   bar.innerHTML=STATE.cenas.map(c=>
-    `<button class="${c.id===STATE.cenaAtual?"on":""}" onclick="trocarCena('${c.id}')">${esc(c.nome)}</button>`).join("")
+    `<button class="${c.id===atual?"on":""}" onclick="trocarCena('${c.id}')">${esc(c.nome)}</button>`).join("")
     +(MESTRE?`<button class="add" onclick="novaCena()">＋ cena</button>`:"");
 }
-function trocarCena(id){ STATE.cenaAtual=id; tokenSel=null; ALVO=null;
+function trocarCena(id){
+  MINHA_CENA=id;
+  try{ localStorage.setItem(chaveMinhaCena(), id); }catch(e){}
+  tokenSel=null; ALVO=null;
   const c=cenaAtual(); $("#gridSize").value=c.grid; $("#gridV").textContent=c.grid; $("#gridOn").checked=c.gridOn;
-  mostrarMapa(); desenharGrid(); renderTokens(); renderCenasBar(); renderCenario(); resetView(); save();
+  mostrarMapa(); desenharGrid(); renderTokens(); renderCenasBar(); renderCenario(); resetView();
   if(typeof atualizaFichaSel==="function")atualizaFichaSel(); if(typeof renderHotbar==="function")renderHotbar(); }
 function novaCena(){ const n=prompt("Nome da nova cena:","Cena "+(STATE.cenas.length+1)); if(n===null)return;
   const id="cena"+uid(); STATE.cenas.push({id,nome:n||("Cena "+(STATE.cenas.length+1)),grid:60,gridOn:true,mapa:null,mapaW:0,mapaH:0,tokens:[]});
-  STATE.cenaAtual=id; renderCenasBar(); trocarCena(id); }
+  save(); renderCenasBar(); trocarCena(id); }
 function renomearCena(){ const c=cenaAtual(); const n=prompt("Renomear cena:",c.nome); if(n){c.nome=n;renderCenasBar();renderCenario();save();} }
 function excluirCena(){ if(STATE.cenas.length<=1){alert("A campanha precisa de ao menos uma cena.");return;}
   if(!confirm("Excluir a cena atual?"))return;
-  STATE.cenas=STATE.cenas.filter(c=>c.id!==STATE.cenaAtual); STATE.cenaAtual=STATE.cenas[0].id;
-  renderCenasBar(); trocarCena(STATE.cenaAtual); }
+  const idExcluir=minhaCenaId();
+  STATE.cenas=STATE.cenas.filter(c=>c.id!==idExcluir);
+  save(); trocarCena(STATE.cenas[0].id); }
 function renderCenario(){
   if(painelAberto!=="cenario")return;
   $("#cenaNomeLbl").textContent=cenaAtual().nome;
@@ -5160,19 +5176,28 @@ function acaoAtaque(id,qual){
     toast("🎯 Marque um alvo: toque em um token no mapa e ataque.");
     return;
   }
-  // verifica ALCANCE da arma antes de atacar
-  const chk=alcanceOk(f,marcado,arma);
-  if(!chk.ok){
-    const ehCorpoACorpo = /corpo a corpo|cac/i.test((arma&&arma.alc)||"");
-    const meuTk=cenaAtual().tokens.find(t=>t.fichaId===f.id);
-    if(ehCorpoACorpo && meuTk){
-      // AVANÇA até o alvo (animado) e então ataca. Se o trajeto passar do alcance
-      // de movimento livre (Próximo ≈ 6▢), exige teste de Agilidade antes.
+  // ARMA CORPO A CORPO: se o alvo está fora do corpo a corpo, o jogador AVANÇA
+  // (animado) até ficar adjacente e só então ataca — mesmo comportamento do inimigo.
+  const ehCorpoACorpo = /corpo a corpo|cac/i.test((arma&&arma.alc)||"");
+  const meuTk=cenaAtual().tokens.find(t=>t.fichaId===f.id);
+  if(ehCorpoACorpo && meuTk && marcado){
+    const g=cenaAtual().grid||60;
+    const dist=Math.hypot(marcado.x-meuTk.x, marcado.y-meuTk.y)/g;
+    if(dist>1.5){
+      // avança até o alvo (animado) e então ataca. Se o trajeto passar do alcance
+      // de movimento livre (Próximo ≈ 6▢), pede teste de Agilidade antes.
       avancarParaAtacar(f, meuTk, marcado, ()=>{
         _resolverAtaque(f,arma,dn,hab,bonusTeste,qual,[{id:marcado.id,nome:marcado.nome}]);
       });
       return;
     }
+    // já está corpo a corpo: ataca direto
+    _resolverAtaque(f,arma,dn,hab,bonusTeste,qual,[{id:marcado.id,nome:marcado.nome}]);
+    return;
+  }
+  // armas à distância: verifica alcance normalmente
+  const chk=alcanceOk(f,marcado,arma);
+  if(!chk.ok){
     const seguir=confirm(`⚠ ${marcado.nome} está a ${chk.dist.toFixed(1)}▢ (${chk.distNome}), mas ${arma?arma.n:"a arma"} alcança só ${chk.armaAlc}.\n\nAtacar mesmo assim?`);
     if(!seguir) return;
   }
@@ -5199,7 +5224,7 @@ function checarAtaqueOportunidade(inimTk, ox, oy){
       // é o jogador dono quem decide (ou o mestre, se estiver controlando)
       const souEu = (f.dono===EU) || (MESTRE && (!f.dono || f.dono===EU));
       if(souEu){
-        oferecerAtaqueOportunidade(f, inimTk);
+        oferecerAtaqueOportunidade(f, inimTk, ox, oy);
       } else if(MESTRE && f.dono && typeof firebase!=="undefined" && typeof sincAtiva==="function" && sincAtiva()){
         // avisa o jogador dono via prompt remoto
         try{ firebase.database().ref("mesas/"+SALA+"/prompts").push({tipo:"oportunidade",para:f.dono,fid:f.id,tid:inimTk.id,t:Date.now()}); }catch(e){}
@@ -5208,9 +5233,9 @@ function checarAtaqueOportunidade(inimTk, ox, oy){
     }
   });
 }
-function oferecerAtaqueOportunidade(f, inimTk){
+function oferecerAtaqueOportunidade(f, inimTk, ox, oy){
   const box=$("#poderModal"),body=$("#poderBody");
-  window.__ataqueOp={fid:f.id,tid:inimTk.id};
+  window.__ataqueOp={fid:f.id,tid:inimTk.id,ox,oy};
   body.innerHTML=`<h3 style="color:var(--ember)">⚡ Ataque de Oportunidade</h3>
     <p><b>${esc(inimTk.nome)}</b> tentou sair do seu alcance corpo a corpo.</p>
     <p class="hint">Faça um teste de reação (atributo à sua escolha) contra a Dificuldade dele (${inimTk.dif||inimTk.evasao||"?"}). Em sucesso, escolha 1 efeito (2 no crítico): impedir o movimento, causar dano da arma principal, ou mover-se junto.</p>
@@ -5222,6 +5247,7 @@ function oferecerAtaqueOportunidade(f, inimTk){
 }
 function resolverAtaqueOportunidade(){
   const a=window.__ataqueOp; if(!a)return; window.__ataqueOp=null;
+  const origem={ox:a.ox,oy:a.oy};
   const f=STATE.fichas.find(x=>x.id===a.fid); const inimTk=cenaAtual().tokens.find(x=>x.id===a.tid);
   if(!f||!inimTk){ fecharPoder(); return; }
   fecharPoder();
@@ -5234,14 +5260,70 @@ function resolverAtaqueOportunidade(){
     const passou = res.crit || res.total>=dif;
     if(!passou){ logItem(`⚡ <b>${esc(f.nome)}</b> tenta o Ataque de Oportunidade em <b>${esc(inimTk.nome)}</b>: <b>${res.total}</b> vs Dif ${dif} — falhou.`,"var(--dim)"); return; }
     logItem(`⚡ <b>${esc(f.nome)}</b> acerta o Ataque de Oportunidade em <b>${esc(inimTk.nome)}</b>! ${res.crit?"(crítico — escolha 2 efeitos)":"(escolha 1 efeito)"}`,"var(--ember)");
-    // rola o dano da arma principal e aplica ao inimigo
+    // guarda o contexto e deixa o jogador ESCOLHER o(s) efeito(s) — livro p.42
+    escolherEfeitoOportunidade(f, inimTk, !!res.crit, origem);
+  }, f);
+}
+// menu de efeitos do Ataque de Oportunidade: 1 no sucesso, 2 no crítico
+function escolherEfeitoOportunidade(f, inimTk, crit, origem){
+  window.__opEfeito={fid:f.id, tid:inimTk.id, restam: crit?2:1, feitos:[], origem: origem||null};
+  renderEscolhaOportunidade();
+}
+function renderEscolhaOportunidade(){
+  const st=window.__opEfeito; if(!st){ return; }
+  const f=STATE.fichas.find(x=>x.id===st.fid); const inimTk=cenaAtual().tokens.find(x=>x.id===st.tid);
+  if(!f||!inimTk){ fecharPoder(); window.__opEfeito=null; return; }
+  const box=$("#poderModal"),body=$("#poderBody");
+  const feito=(k)=>st.feitos.includes(k);
+  body.innerHTML=`<h3 style="color:var(--ember)">⚡ Escolha o efeito${st.restam>1?"s":""} — faltam ${st.restam}</h3>
+    <p class="hint">Ataque de Oportunidade em <b>${esc(inimTk.nome)}</b>. Escolha ${st.restam} efeito${st.restam>1?"s":""}:</p>
+    <div class="row" style="flex-direction:column;gap:8px;margin-top:10px">
+      <button class="btn" ${feito("impedir")?"disabled":""} onclick="__opAplicar('impedir')">🛑 Ele não pode sair de onde está</button>
+      <button class="btn" ${feito("dano")?"disabled":""} onclick="__opAplicar('dano')">🗡 Causar dano (arma principal)</button>
+      <button class="btn" ${feito("mover")?"disabled":""} onclick="__opAplicar('mover')">🏃 Você se movimenta com ele</button>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn" onclick="fecharPoder();window.__opEfeito=null">Encerrar</button>
+    </div>`;
+  box.classList.add("on");
+}
+function __opAplicar(efeito){
+  const st=window.__opEfeito; if(!st)return;
+  const f=STATE.fichas.find(x=>x.id===st.fid); const inimTk=cenaAtual().tokens.find(x=>x.id===st.tid);
+  if(!f||!inimTk){ fecharPoder(); window.__opEfeito=null; return; }
+  if(st.feitos.includes(efeito)) return;
+  st.feitos.push(efeito); st.restam--;
+  if(efeito==="impedir"){
+    // devolve o inimigo à posição de origem (ele não sai do lugar)
+    if(st.origem){ inimTk.x=st.origem.ox; inimTk.y=st.origem.oy; renderTokens(); save(); }
+    logItem(`🛑 <b>${esc(f.nome)}</b> impede <b>${esc(inimTk.nome)}</b> de sair do alcance.`,"var(--gold2)");
+    toast(`${inimTk.nome} não pode sair de onde está`);
+  } else if(efeito==="mover"){
+    // move o token do jogador junto do inimigo (fica corpo a corpo)
+    const meuTk=cenaAtual().tokens.find(t=>t.fichaId===f.id);
+    if(meuTk){
+      const g=cenaAtual().grid||60;
+      const ang=Math.atan2(meuTk.y-inimTk.y, meuTk.x-inimTk.x);
+      meuTk.x=inimTk.x + Math.cos(ang)*g*0.95;
+      meuTk.y=inimTk.y + Math.sin(ang)*g*0.95;
+      renderTokens(); save();
+      logItem(`🏃 <b>${esc(f.nome)}</b> se movimenta junto de <b>${esc(inimTk.nome)}</b>.`,"var(--gold2)");
+    }
+  } else if(efeito==="dano"){
+    fecharPoder();
     const arma=armaPorNome(ARMAS_PAT,f.armaPrim,f.armaPrimP);
     const dn=parseDano(arma?arma.dano:f.danoPrim)||{qtd:1,faces:8,bonus:0};
     const prof=f.prof||1;
     rolarDanoCb(dn.faces, prof, dn.bonus, `Dano · ${arma?arma.n:"arma"} (oportunidade)`, (tot)=>{
       aplicarDanoAlvos([{id:inimTk.id,nome:inimTk.nome}], tot);
+      // se ainda resta escolha (crítico), reabre o menu
+      if(st.restam>0) renderEscolhaOportunidade(); else window.__opEfeito=null;
     });
-  }, f);
+    return; // o callback do dano decide se reabre
+  }
+  // impedir/mover: se ainda resta escolha, reabre; senão encerra
+  if(st.restam>0) renderEscolhaOportunidade();
+  else { fecharPoder(); window.__opEfeito=null; }
 }
 // move o token do atacante até ficar adjacente ao alvo, com animação, e então executa cb.
 // Se o deslocamento passar do alcance de movimento livre (Próximo), pede teste de Agilidade.
@@ -5369,8 +5451,10 @@ function _resolverAtaque(f,arma,dn,hab,bonusTeste,qual,sel){
   const meuToken=tokenDaFicha(f);
   const alvoToken=sel[0]?cenaAtual().tokens.find(t=>t.id===sel[0].id):null;
   const alc=arma?arma.alc:"Corpo a corpo";
+  const ehCac=/corpo a corpo|cac/i.test(alc);
   const chk=checarAlcance(meuToken,alvoToken,alc);
-  if(meuToken && alvoToken && !chk.ok){
+  // armas corpo a corpo já tiveram a aproximação resolvida em acaoAtaque; não re-checa
+  if(!ehCac && meuToken && alvoToken && !chk.ok){
     const distQuad=(chk.dist/(cenaAtual().grid||60)).toFixed(1);
     logItem(`⚠ <b>${esc(f.nome)}</b>: <b>${esc(alvoNome)}</b> está fora do alcance (${esc(alc)}) da ${esc(arma?arma.n:"arma")} — distância ~${distQuad} quadrados`,"var(--ember)");
     if(!confirm(`${alvoNome} parece estar FORA do alcance "${alc}" da sua arma (~${distQuad} quadrados de distância).\n\nAtacar mesmo assim?`)){
@@ -6015,9 +6099,31 @@ function _inimigoRolarCom(tid, vant){
   const g=cenaAtual().grid||60;
   if(ehCorpoACorpo && alvoTk){
     const dist=Math.hypot(alvoTk.x-t.x, alvoTk.y-t.y)/g;
-    if(dist>1.5){ avancarInimigo(t, alvoTk, ()=>_inimigoResolveAtaque(t,sel)); return; }
+    if(dist>1.5){
+      // fora do corpo a corpo: o mestre decide se o inimigo AVANÇA. Se não avançar,
+      // o ataque corpo a corpo não acontece e não há dano.
+      pedirAvancoInimigo(t, alvoTk, sel, dist);
+      return;
+    }
   }
   _inimigoResolveAtaque(t,sel);
+}
+// pergunta ao mestre se o inimigo avança até o alvo antes de um ataque corpo a corpo
+function pedirAvancoInimigo(t, alvoTk, sel, dist){
+  const box=$("#poderModal"),body=$("#poderBody");
+  body.innerHTML=`<h3>🏃 ${esc(t.nome)} está fora do corpo a corpo</h3>
+    <p class="hint"><b>${esc(sel[0].nome)}</b> está a ${dist.toFixed(1)}▢ de <b>${esc(t.nome)}</b>. Uma arma <b>corpo a corpo</b> só atinge o alvo se o inimigo se aproximar primeiro.</p>
+    <div class="row" style="flex-direction:column;gap:8px;margin-top:10px">
+      <button class="btn pri" onclick="__inimigoAvancaEataca()">🏃 Avançar e atacar</button>
+      <button class="btn" onclick="fecharPoder();window.__inimAvanco=null" >✋ Não avançar (ataque não acontece)</button>
+    </div>`;
+  window.__inimAvanco={t,alvoTk,sel};
+  box.classList.add("on");
+}
+function __inimigoAvancaEataca(){
+  const A=window.__inimAvanco; if(!A){fecharPoder();return;}
+  window.__inimAvanco=null; fecharPoder();
+  avancarInimigo(A.t, A.alvoTk, ()=>_inimigoResolveAtaque(A.t, A.sel));
 }
 // move o token do inimigo até ficar adjacente ao alvo, com animação, e então ataca
 function avancarInimigo(t, alvoTk, cb){
@@ -6141,7 +6247,7 @@ function inimigoHabilidade(tid){
       if(h.pedeReacao)tags.push(`<span class="ih-reac">alvo faz reação (${h.reacaoAtr})</span>`);
       return `<button class="grim-op ih-op" onclick="usarHabInimigo(${gi})">
         <b>${esc(h.nome||"Habilidade")}</b> ${tags.join(" ")}
-        <small>${esc(h.texto.slice(0,130))}${h.texto.length>130?"…":""}</small>
+        <small>${esc(h.texto)}</small>
       </button>`;
     }).join("")}`:"";
   body.innerHTML=`<h3 style="color:${t.cor}">${esc(t.nome)}</h3>
