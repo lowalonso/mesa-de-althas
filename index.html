@@ -1,4 +1,4 @@
-<!-- BUILD:v-124204 (ficha: patamar 4, cartas filtradas por nivel, experiencias editaveis) -->
+<!-- BUILD:v-170216 (cartas: teste de conjuracao abre modal de experiencia+vantagem) -->
 <!-- BUILD:v-230710 -->
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -2316,7 +2316,7 @@ function editandoFicha(){
 }
 
 loadLocal();
-console.log('%c MESA DE ALTHAS BUILD:v-124204 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
+console.log('%c MESA DE ALTHAS BUILD:v-170216 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
 // ============================================================
 // MÓDULO 2 — mesa, cenas, tokens, régua em área, fichas, galeria, mestre, música
 // ============================================================
@@ -4411,7 +4411,12 @@ function proximoPasso(){
     // DOM ARCANO: +1 em todo teste de conjuração de quem tem a carta
     const bDom = (tipo==="conjuracao" && typeof bonusDomArcano==="function") ? bonusDomArcano(f) : 0;
     const rotMod=(modEscolha?` (${modEscolha>0?"+":""}${modEscolha} da escolha)`:"")+(bDom?` (+${bDom} Dom Arcano)`:"");
-    rolarDualidadeCb(`${carta.n} · teste de ${tipo}${rotMod}`,(f.atributos[modo]||0)+modEscolha+bDom,alvoNome,(res)=>{
+    const modBase=(f.atributos[modo]||0)+modEscolha+bDom;
+    // roda o teste da carta, aplicando extras (experiência / vantagem) escolhidos no modal
+    const rolarTesteCarta=(extraMod,vantExp,ehReacao)=>{
+      const modFinal=modBase+(extraMod||0);
+      const rolador = ehReacao ? (typeof rolarReacaoCb==="function"?rolarReacaoCb:rolarDualidadeCb) : rolarDualidadeCb;
+      rolador(`${carta.n} · teste de ${tipo}${rotMod}${vantExp&&vantExp.usouExp?" · "+esc(vantExp.usouExp.nome):""}`,modFinal,alvoNome,(res)=>{
       EXEC.resultado=res; EXEC.i++;
       // opção da carta que faz o ALVO marcar Fadiga (ex.: Constrição → Constringir)
       if(EXEC.ef.fadigaAlvo && EXEC.alvos.length && res && (res.crit || !EXEC.ef.dif || res.total>=(EXEC.ef.dif||0))){
@@ -4431,6 +4436,14 @@ function proximoPasso(){
       if(EXEC.ef.reacaoAlvo && EXEC.alvos.length && !falhouDifFixa){ resolverReacaoAlvos(()=>proximoPasso()); }
       else proximoPasso();
     });
+    }; // fim de rolarTesteCarta
+    // teste de reação não gera Esperança/Medo nem oferece experiência (regra)
+    if(tipo==="reacao"){ window.__ehReacao=true; rolarTesteCarta(0,null,true); }
+    else {
+      // abre o modal de opções (experiência + vantagem/desvantagem) antes de rolar
+      abrirOpcoesRolagem(f,{label:`${carta.n} · teste de ${tipo}`, mod:modBase, alvo:EXEC.alvos[0]||null,
+        onRoll:(modTotal,vant,usouExp)=>{ rolarTesteCarta((modTotal||0)-modBase,{usouExp},false); }});
+    }
   }
   else if(passo==="dano"){
     const dmg=EXEC.ef.dano||{qtd:1,faces:(EXEC.ef.danoVar?EXEC.ef.danoVar.faces:6),bonus:0};
