@@ -1,4 +1,4 @@
-<!-- BUILD:v-061950 (Codice nv1: Ava, Illiat e Grimoire - 9 magias automatizadas com animacoes) -->
+<!-- BUILD:v-124204 (ficha: patamar 4, cartas filtradas por nivel, experiencias editaveis) -->
 <!-- BUILD:v-230710 -->
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -1437,7 +1437,7 @@ function parseFichaWords(words){
     if (iTr>=0 && iNv>iTr) f.subclasse = toks.slice(iTr+1,iNv).filter(t=>t!=="·").join(" ").trim();
     if (iNv>=0) f.nivel = +toks[iNv+1] || 1;
     if (iDom>=0) f.dominios = toks.slice(iDom+1).filter(t=>!["·","&","e",","].includes(t)).map(cap);
-    f.patamar = f.nivel>=8?3 : f.nivel>=5?3 : f.nivel>=2?2 : 1;
+    f.patamar = f.nivel>=8?4 : f.nivel>=5?3 : f.nivel>=2?2 : 1;
   }
   if (linCls){
     const acima = linhasDe(p0).filter(l => l.y < linCls.y);
@@ -2316,7 +2316,7 @@ function editandoFicha(){
 }
 
 loadLocal();
-console.log('%c MESA DE ALTHAS BUILD:v-061950 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
+console.log('%c MESA DE ALTHAS BUILD:v-124204 ','background:#e0662f;color:#fff;padding:2px 6px');montarEntrada();
 // ============================================================
 // MÓDULO 2 — mesa, cenas, tokens, régua em área, fichas, galeria, mestre, música
 // ============================================================
@@ -2961,7 +2961,7 @@ function novaFicha(){
     evasao:11,pvMax:6,pv:0,fadigaMax:6,fadiga:0,esperanca:2,prof:1,
     armadura:"Armadura de couro",armPts:3,armMarc:0,limMenor:6,limGrave:13,
     armaPrim:"Espada longa",armaPrimP:1,armaSec:"Nenhuma",armaSecP:1,armaduraP:1,cartas:[],dominios:[],
-    conceito:"",itens:"",experiencias:[],habClasse:"",habEsperanca:"",habSubclasse:"",notas:"",img:null};
+    conceito:"",itens:"",experiencias:[{nome:"",bonus:2},{nome:"",bonus:2}],habClasse:"",habEsperanca:"",habSubclasse:"",notas:"",img:null};
   aplicarClasse(f);
   STATE.fichas.push(f);fichaAberta=f.id;save();renderFichas();atualizaFichaSel();renderHotbar();
 }
@@ -3099,8 +3099,8 @@ function fichaEditor(f){
   const subclasses=Object.keys(c.subclasses||{});
   const arm=(typeof ARMADURAS!=="undefined")&&ARMADURAS.find(a=>a.n===f.armadura);
   const doms=f.dominios&&f.dominios.length?f.dominios:(c.dominios||[]);
-  const cartasDisp=doms.flatMap(dm=>((typeof CARTAS!=="undefined"&&CARTAS[dm])||[]).map(ct=>({...ct,dom:dm,nivel:1}))
-    .concat(STATE.cartasCustom.filter(cc=>cc.dom===dm)));
+  const cartasDisp=doms.flatMap(dm=>((typeof CARTAS!=="undefined"&&CARTAS[dm])||[]).filter(ct=>(ct.lvl||1)<=(f.nivel||1)).map(ct=>({...ct,dom:dm,nivel:(ct.lvl||1)}))
+    .concat(STATE.cartasCustom.filter(cc=>cc.dom===dm&&(cc.lvl||1)<=(f.nivel||1))));
   return `<div class="card" id="fichaEditor">
     <div class="row" style="justify-content:space-between">
       <h2 class="sec" style="margin:0">✦ ${esc(f.nome)||"Nova ficha"} <small style="font-family:'IBM Plex Mono';font-size:10px;color:var(--dim)">nv ${f.nivel} · patamar ${f.patamar}</small></h2>
@@ -3230,7 +3230,16 @@ function fichaEditor(f){
       ${(typeof TRANSFORMACOES!=="undefined"?Object.keys(TRANSFORMACOES):[]).map(n=>`<option${f.transformacao===n?" selected":""}>${n}</option>`).join("")}
     </select>
     ${f.transformacao&&f.habTransformacao?`<div class="poderTxt" style="font-size:12px;margin-top:4px;border-left:2px solid ${DOM_CORES["Transformação"]}">${esc(f.habTransformacao)}</div>`:""}
-    ${(f.experiencias||[]).length?`<label class="fld">Experiências</label>${f.experiencias.map(e=>`<span class="pill">${esc(e.nome)} ${e.bonus>=0?"+":""}${e.bonus}</span>`).join("")}`:""}
+    <label class="fld" style="margin-top:12px">Experiências <span style="color:var(--dim);font-weight:400;font-size:10px">(no 1º nível: 2 Experiências com +2 — some +1 ao subir de nível)</span></label>
+    ${(f.experiencias||[]).map((e,i)=>`<div class="row" style="margin-bottom:5px;gap:6px;align-items:center">
+      <input class="txt" style="flex:1;min-width:140px;margin:0" placeholder="Nome da Experiência (ex.: Contrabandista Nato)" value="${esc(e.nome||"")}" onchange="fExpNome('${f.id}',${i},this.value)">
+      <div class="row" style="gap:2px;align-items:center;flex:none">
+        <span style="color:var(--dim);font-size:12px">+</span>
+        <input class="txt" type="number" style="width:56px;margin:0;text-align:center" value="${e.bonus!=null?e.bonus:2}" onchange="fExpBonus('${f.id}',${i},this.value)">
+      </div>
+      <button class="btn danger" style="padding:2px 8px;flex:none" onclick="fDelExp('${f.id}',${i})">✕</button>
+    </div>`).join("")}
+    <button class="btn" style="margin-top:2px" onclick="fAddExp('${f.id}')">＋ Experiência</button>
     <label class="fld" style="margin-top:10px">Notas</label>
     <textarea class="txt" onchange="fEdit('${f.id}','notas',this.value)">${esc(f.notas||"")}</textarea>
   </div>`;
@@ -3499,6 +3508,10 @@ function chAttr(id,a,v){const f=fichaPorId(id);f.atributos[a]=clamp(f.atributos[
 function fPip(id,k,i){const f=fichaPorId(id);f[k]=(f[k]===i+1)?i:i+1;const max=k==="pv"?f.pvMax:k==="fadiga"?f.fadigaMax:k==="esperanca"?6:f.armPts;f[k]=clamp(f[k],0,max);save();renderFichas(false);renderTokens();renderHotbar();}
 function fAddCarta(id){const f=fichaPorId(id);const v=$("#selCarta_"+id).value;if(v&&!(f.cartas||[]).includes(v)){f.cartas=f.cartas||[];f.cartas.push(v);}save();renderFichas(false);renderHotbar();}
 function fDelCarta(id,i){const f=fichaPorId(id);f.cartas.splice(i,1);save();renderFichas(false);renderHotbar();}
+function fAddExp(id){const f=fichaPorId(id);f.experiencias=f.experiencias||[];f.experiencias.push({nome:"",bonus:2});save();renderFichas(false);}
+function fDelExp(id,i){const f=fichaPorId(id);f.experiencias=f.experiencias||[];f.experiencias.splice(i,1);save();renderFichas(false);}
+function fExpNome(id,i,v){const f=fichaPorId(id);f.experiencias=f.experiencias||[];if(f.experiencias[i]){f.experiencias[i].nome=v;save();}}
+function fExpBonus(id,i,v){const f=fichaPorId(id);f.experiencias=f.experiencias||[];if(f.experiencias[i]){f.experiencias[i].bonus=parseInt(v)||0;save();renderFichas(false);}}
 function usarCartaDaFicha(id,i){
   const f=fichaPorId(id); if(!f)return;
   // define como ficha ativa para o efeito rolar com os atributos certos
